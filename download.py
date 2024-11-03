@@ -185,10 +185,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Download and process images from URLs in a CSV file.')
     
     parser.add_argument(
-        '--input-csv',
+        '--input-file',
         type=str,
         default='data/capsfusion_head.csv',
-        help='Path to input CSV file containing image_url and capsfusion columns'
+        help='Path to input file containing image_url and capsfusion columns'
     )
     
     parser.add_argument(
@@ -217,11 +217,14 @@ def parse_arguments():
 if __name__ == "__main__":
     args = parse_arguments()
     
-    if not os.path.exists(args.input_csv):
-        raise FileNotFoundError(f"Input CSV file not found: {args.input_csv}")
+    if not os.path.exists(args.input_file):
+        raise FileNotFoundError(f"Input CSV file not found: {args.input_file}")
     
     try:
-        df = pd.read_csv(args.input_csv)
+        if args.input_file.endswith('.parquet'):
+            df = pd.read_parquet(args.input_file)
+        else:
+            df = pd.read_csv(args.input_file)
         
         required_columns = ['image_url', 'capsfusion']
         missing_columns = [col for col in required_columns if col not in df.columns]
