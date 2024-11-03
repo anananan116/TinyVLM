@@ -24,3 +24,13 @@ For preprocessing, we plan on doing the following:
 - Normalization is likely not needed, however will perform when needed
 - Classification of the data, classifying each of the features
 - Encorporate image descriptions to the desired images for training
+- Prepare questions and answers for images to do instruction Tuning to the LLM pre-train model
+
+### Data preparing for instruction tuning
+1. download questions and answers form the dataset
+2. Create data frame from json data files which include questions and answers
+3. Combine question and answers and create a new dataframe according to the image_id and answer_id
+4. Create answers into a complete sentences
+5. Add tags to indicate system prompt, user questions, and answers from the model
+6. Combine system prompt, user questions, and answers into one col and label them with corrsponding image_id
+7. Output the data as csv file
