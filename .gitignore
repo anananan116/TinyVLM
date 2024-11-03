@@ -166,3 +166,4 @@ data/
 images/
 reports/
 temp.ipynb
+*.pth
