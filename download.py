@@ -252,7 +252,7 @@ def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4
         combined_stats['success_count'] += processor.stats['success_count']
         combined_stats['crop_count'] += processor.stats['crop_count']
         combined_stats['pad_count'] += processor.stats['pad_count']
-        
+        chunk_df[['image_url', 'capsfusion', 'identifier', 'original_width', 'original_height']].to_csv(f"cache/image_metadata_{i}.csv", index=False)
         result_dfs.append(chunk_df[['image_url', 'capsfusion', 'identifier', 'original_width', 'original_height']])
         
         chunk_pbar.update(1)
