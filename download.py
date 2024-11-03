@@ -12,6 +12,7 @@ from collections import defaultdict
 import warnings
 from queue import Queue
 from threading import Lock
+from tqdm import tqdm
 
 # Suppress PIL warnings about palette images
 warnings.filterwarnings('ignore', category=UserWarning, module='PIL.Image')
@@ -28,6 +29,7 @@ class ImageProcessor:
             'success_count': 0,
             'start_time': time.time()
         }
+        self.pbar = None
         
     def process_single_image(self, task):
         """Process a single image from the task queue"""
@@ -67,6 +69,8 @@ class ImageProcessor:
             with self.stats_lock:
                 self.stats['download_times'].append(download_time)
                 self.stats['success_count'] += 1
+                if self.pbar:
+                    self.pbar.update(1)
             
             return True, idx
             
@@ -77,6 +81,8 @@ class ImageProcessor:
                     'identifier': row['identifier'],
                     'error': str(e)
                 })
+                if self.pbar:
+                    self.pbar.update(1)
             return False, idx
 
     def worker(self, task_queue, results):
@@ -105,6 +111,15 @@ def download_and_process_images(df, timeout=10, max_workers=4, resolution=224):
     task_queue = Queue()
     results = [None] * len(df)
     
+    # Initialize progress bar
+    processor.pbar = tqdm(
+        total=len(df),
+        desc="Downloading images",
+        unit="img",
+        dynamic_ncols=True,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+    )
+    
     # Fill task queue
     for idx, row in df.iterrows():
         task_queue.put((row, idx))
@@ -118,6 +133,9 @@ def download_and_process_images(df, timeout=10, max_workers=4, resolution=224):
         
         # Wait for all tasks to complete
         concurrent.futures.wait(workers)
+    
+    # Close progress bar
+    processor.pbar.close()
     
     # Calculate final statistics
     processor.stats['end_time'] = time.time()
