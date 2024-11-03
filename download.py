@@ -245,7 +245,7 @@ def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4
         
         chunk_df['original_width'] = chunk_df['identifier'].map(lambda x: resolutions.get(x, (None, None))[0])
         chunk_df['original_height'] = chunk_df['identifier'].map(lambda x: resolutions.get(x, (None, None))[1])
-        
+        chunk_df = chunk_df[chunk_df['original_width'].notnull()]
         # Update combined statistics
         combined_stats['download_times'].extend(processor.stats['download_times'])
         combined_stats['failed_downloads'].extend(processor.stats['failed_downloads'])
