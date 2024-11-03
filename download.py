@@ -13,28 +13,29 @@ import warnings
 from queue import Queue
 from threading import Lock
 from tqdm import tqdm
-import numpy as np
 
 # Suppress PIL warnings about palette images
 warnings.filterwarnings('ignore', category=UserWarning, module='PIL.Image')
-
 class ImageProcessor:
-    def __init__(self, timeout=10, max_workers=4, resolution=224):
+    def __init__(self, timeout=10, max_workers=4, resolution=224, pbar=None):
         self.timeout = timeout
         self.max_workers = max_workers
         self.resolution = resolution
         self.stats_lock = Lock()
+        self.pbar = pbar
+        self.reset_stats()
+        
+    def reset_stats(self):
+        """Reset statistics for new chunk processing"""
         self.stats = {
             'download_times': [],
             'failed_downloads': [],
             'success_count': 0,
             'start_time': time.time()
         }
-        self.pbar = None
-        
-    def process_single_image(self, task):
-        """Process a single image from the task queue"""
-        row, idx = task
+
+    def process_single_image(self, row):
+        """Process a single image"""
         start_time = time.time()
         try:
             response = requests.get(row['image_url'], timeout=self.timeout)
@@ -42,7 +43,6 @@ class ImageProcessor:
             
             img = Image.open(BytesIO(response.content))
             
-            # Handle different image modes
             if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
                 img = img.convert('RGBA')
                 background = Image.new('RGB', img.size, (255, 255, 255))
@@ -55,9 +55,7 @@ class ImageProcessor:
                 img = img.convert('RGB')
             
             img.thumbnail((self.resolution, self.resolution))
-            
             new_img = Image.new('RGB', (self.resolution, self.resolution), (255, 255, 255))
-            
             paste_x = (self.resolution - img.width) // 2
             paste_y = (self.resolution - img.height) // 2
             new_img.paste(img, (paste_x, paste_y))
@@ -72,8 +70,12 @@ class ImageProcessor:
                 self.stats['success_count'] += 1
                 if self.pbar:
                     self.pbar.update(1)
+                    self.pbar.set_postfix({
+                        'Success': self.stats['success_count'],
+                        'Failed': len(self.stats['failed_downloads'])
+                    })
             
-            return True, idx
+            return True, row['identifier']
             
         except Exception as e:
             with self.stats_lock:
@@ -84,78 +86,93 @@ class ImageProcessor:
                 })
                 if self.pbar:
                     self.pbar.update(1)
-            return False, idx
+                    self.pbar.set_postfix({
+                        'Success': self.stats['success_count'],
+                        'Failed': len(self.stats['failed_downloads'])
+                    })
+            return False, row['identifier']
 
-    def worker(self, task_queue, results):
-        """Worker function that processes tasks from the queue"""
-        while True:
-            try:
-                task = task_queue.get_nowait()
-            except Queue.Empty:
-                break
-            
-            success, idx = self.process_single_image(task)
-            results[idx] = success
-            task_queue.task_done()
-
-def download_and_process_images(df, timeout=10, max_workers=4, resolution=224):
-    """
-    Download images from URLs, process them, and save metadata using dynamic thread assignment
-    """
-    os.makedirs("images", exist_ok=True)
-    
-    df = df.copy()
-    df['identifier'] = [str(uuid.uuid4()) for _ in range(len(df))]
-    
-    # Initialize processor and queues
-    processor = ImageProcessor(timeout, max_workers, resolution)
-    task_queue = Queue()
-    results = [None] * len(df)
-    
-    # Initialize progress bar
-    processor.pbar = tqdm(
-        total=len(df),
-        desc="Downloading images",
-        unit="img",
-        dynamic_ncols=True,
-        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
-    )
-    
-    # Fill task queue
-    for idx, row in df.iterrows():
-        task_queue.put((row, idx))
-    
-    # Create thread pool and start processing
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        workers = []
-        for _ in range(max_workers):
-            worker = executor.submit(processor.worker, task_queue, results)
-            workers.append(worker)
+def process_chunk(chunk_df, processor):
+    """Process a single chunk of the dataframe"""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=processor.max_workers) as executor:
+        # Submit all tasks and store futures with their corresponding rows
+        future_to_row = {
+            executor.submit(processor.process_single_image, row): row 
+            for _, row in chunk_df.iterrows()
+        }
         
-        # Wait for all tasks to complete
-        concurrent.futures.wait(workers)
+        # Process completed futures
+        for future in concurrent.futures.as_completed(future_to_row):
+            success, identifier = future.result()
+            # We don't need to track the results by index anymore
+
+def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4, resolution=224):
+    """Process a large dataframe by breaking it into smaller chunks"""
+    num_chunks = (len(df) + chunk_size - 1) // chunk_size
     
-    # Close progress bar
-    processor.pbar.close()
+    # Initialize combined results
+    result_dfs = []
+    combined_stats = {
+        'download_times': [],
+        'failed_downloads': [],
+        'success_count': 0,
+        'start_time': time.time(),
+        'end_time': None,
+        'total_time': 0,
+        'average_download_time': 0
+    }
+    
+    # Create progress bar for chunks
+    chunk_pbar = tqdm(total=num_chunks, desc="Processing chunks", unit="chunk", position=0)
+    print(f"\nProcessing {len(df)} rows in {num_chunks} chunks of {chunk_size} rows each")
+    
+    # Initialize processor
+    processor = ImageProcessor(timeout, max_workers, resolution)
+    
+    # Process each chunk
+    for i in range(num_chunks):
+        start_idx = i * chunk_size
+        end_idx = min((i + 1) * chunk_size, len(df))
+        chunk_df = df.iloc[start_idx:end_idx].copy()
+        chunk_df['identifier'] = [str(uuid.uuid4()) for _ in range(len(chunk_df))]
+        
+        # Reset processor stats for new chunk
+        processor.reset_stats()
+        
+        # Initialize progress bar for current chunk
+        pbar = tqdm(total=len(chunk_df), desc=f"Chunk {i+1}/{num_chunks}", unit="img", position=1, leave=False)
+        processor.pbar = pbar
+        
+        # Process the chunk
+        process_chunk(chunk_df, processor)
+        
+        # Update combined statistics
+        combined_stats['download_times'].extend(processor.stats['download_times'])
+        combined_stats['failed_downloads'].extend(processor.stats['failed_downloads'])
+        combined_stats['success_count'] += processor.stats['success_count']
+        
+        # Append results
+        result_dfs.append(chunk_df[['image_url', 'capsfusion', 'identifier']])
+        
+        # Update chunk progress bar and close it
+        chunk_pbar.update(1)
+        pbar.close()
+    
+    # Close chunk progress bar
+    chunk_pbar.close()
     
     # Calculate final statistics
-    processor.stats['end_time'] = time.time()
-    processor.stats['total_time'] = processor.stats['end_time'] - processor.stats['start_time']
-    processor.stats['average_download_time'] = (
-        sum(processor.stats['download_times']) / len(processor.stats['download_times'])
-        if processor.stats['download_times'] else 0
+    combined_stats['end_time'] = time.time()
+    combined_stats['total_time'] = combined_stats['end_time'] - combined_stats['start_time']
+    combined_stats['average_download_time'] = (
+        sum(combined_stats['download_times']) / len(combined_stats['download_times'])
+        if combined_stats['download_times'] else 0
     )
     
-    # Save metadata
-    output_df = df[['image_url', 'capsfusion', 'identifier']]
-    output_df.to_csv('data/image_metadata.csv', index=False)
+    # Combine all results
+    final_df = pd.concat(result_dfs, ignore_index=True)
     
-    # Save failed downloads
-    if processor.stats['failed_downloads']:
-        failed_df = pd.DataFrame(processor.stats['failed_downloads'])
-        failed_df.to_csv('data/failed_downloads.csv', index=False)
-    
-    return output_df, processor.stats
+    return final_df, combined_stats
 
 def generate_report(stats, total_images):
     """Generate a formatted report of the download statistics"""
@@ -239,74 +256,6 @@ def parse_arguments():
     )
     
     return parser.parse_args()
-def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4, resolution=224):
-    """
-    Process a large dataframe by breaking it into smaller chunks
-    """
-    total_stats = {
-        'download_times': [],
-        'failed_downloads': [],
-        'success_count': 0,
-        'start_time': time.time(),
-        'end_time': None,
-        'total_time': 0,
-        'average_download_time': 0
-    }
-    
-    # Calculate number of chunks
-    num_chunks = int(np.ceil(len(df) / chunk_size))
-    
-    print(f"Processing {len(df)} images in {num_chunks} chunks of {chunk_size} rows each")
-    
-    # Process each chunk
-    main_progress = tqdm(
-        total=len(df),
-        desc="Overall progress",
-        unit="img",
-        position=0,
-        leave=True,
-        dynamic_ncols=True,
-        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
-    )
-    
-    for chunk_idx in range(num_chunks):
-        start_idx = chunk_idx * chunk_size
-        end_idx = min((chunk_idx + 1) * chunk_size, len(df))
-        
-        print(f"\nProcessing chunk {chunk_idx + 1}/{num_chunks} (rows {start_idx} to {end_idx})")
-        chunk_df = df.iloc[start_idx:end_idx].copy()
-        
-        # Process the chunk
-        _, chunk_stats = download_and_process_images(
-            df=chunk_df,
-            timeout=timeout,
-            max_workers=max_workers,
-            resolution=resolution
-        )
-        
-        # Update main progress bar
-        main_progress.update(len(chunk_df))
-        
-        # Aggregate statistics
-        total_stats['download_times'].extend(chunk_stats['download_times'])
-        total_stats['failed_downloads'].extend(chunk_stats['failed_downloads'])
-        total_stats['success_count'] += chunk_stats['success_count']
-        
-        # Print chunk summary
-        print(f"Chunk {chunk_idx + 1} complete: {chunk_stats['success_count']}/{len(chunk_df)} successful")
-    
-    main_progress.close()
-    
-    # Calculate final statistics
-    total_stats['end_time'] = time.time()
-    total_stats['total_time'] = total_stats['end_time'] - total_stats['start_time']
-    total_stats['average_download_time'] = (
-        sum(total_stats['download_times']) / len(total_stats['download_times'])
-        if total_stats['download_times'] else 0
-    )
-    
-    return total_stats
-
 
 if __name__ == "__main__":
     args = parse_arguments()
@@ -315,28 +264,25 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"Input CSV file not found: {args.input_file}")
     
     try:
-        # Create output directories if they don't exist
+        # Create necessary directories
         os.makedirs("images", exist_ok=True)
         os.makedirs("data", exist_ok=True)
         os.makedirs("reports", exist_ok=True)
         
         # Read input file
-        print(f"Reading input file: {args.input_file}")
         if args.input_file.endswith('.parquet'):
             df = pd.read_parquet(args.input_file)
         else:
             df = pd.read_csv(args.input_file)
         
-        # Verify required columns
+        # Validate columns
         required_columns = ['image_url', 'capsfusion']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise ValueError(f"Missing required columns in CSV: {', '.join(missing_columns)}")
         
-        print(f"Found {len(df)} images to process")
-        
-        # Process the dataframe in chunks
-        stats = process_dataframe_in_chunks(
+        # Process dataframe in chunks
+        result_df, stats = process_dataframe_in_chunks(
             df=df,
             chunk_size=args.chunk_size,
             timeout=args.timeout,
@@ -344,16 +290,16 @@ if __name__ == "__main__":
             resolution=args.resolution
         )
         
+        # Save final results
+        result_df.to_csv('data/image_metadata_complete.csv', index=False)
+        
         # Generate and save report
         report = generate_report(stats, len(df))
-        print("\nFinal Report:")
-        print(report)
+        print("\nFinal " + report)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_path = f'reports/download_report_{timestamp}.txt'
-        with open(report_path, 'w') as f:
+        with open(f'reports/download_report_{timestamp}.txt', 'w') as f:
             f.write(report)
-        print(f"\nDetailed report saved to: {report_path}")
         
     except pd.errors.EmptyDataError:
         print("Error: The input CSV file is empty")
