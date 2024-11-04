@@ -167,3 +167,4 @@ images/
 reports/
 temp.ipynb
 *.pth
+*.pickle
