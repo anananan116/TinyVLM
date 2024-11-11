@@ -14,6 +14,7 @@ from queue import Queue
 from threading import Lock
 from tqdm import tqdm
 from torchvision.transforms import Resize, CenterCrop, InterpolationMode
+import glob
 
 # Suppress PIL warnings about palette images
 warnings.filterwarnings('ignore', category=UserWarning, module='PIL.Image')
@@ -203,9 +204,62 @@ def process_chunk(chunk_df, processor):
     
     return resolutions
 
+def load_or_create_identifiers(df, cache_dir="cache"):
+    """
+    Load existing identifiers from cache or create new ones
+    Returns DataFrame with identifiers and the starting chunk index
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    identifier_file = os.path.join(cache_dir, "image_identifiers.csv")
+    
+    if os.path.exists(identifier_file):
+        print("Loading existing identifiers from cache...")
+        identifiers_df = pd.read_csv(identifier_file)
+        df = df.merge(identifiers_df[['image_url', 'identifier']], on='image_url', how='left')
+        # Generate new identifiers only for rows that don't have one
+        mask = df['identifier'].isna()
+        df.loc[mask, 'identifier'] = [str(uuid.uuid4()) for _ in range(mask.sum())]
+    else:
+        print("Creating new identifiers...")
+        df['identifier'] = [str(uuid.uuid4()) for _ in range(len(df))]
+        df[['image_url', 'identifier']].to_csv(identifier_file, index=False)
+    
+    return df
+
+def get_last_processed_chunk(cache_dir="cache"):
+    """
+    Determine the last successfully processed chunk
+    Returns -1 if no chunks were processed
+    """
+    pattern = os.path.join(cache_dir, "image_metadata_*.csv")
+    processed_files = glob.glob(pattern)
+    
+    if not processed_files:
+        return -1
+    
+    chunk_numbers = []
+    for file in processed_files:
+        try:
+            chunk_num = int(file.split("_")[-1].split(".")[0])
+            chunk_numbers.append(chunk_num)
+        except (ValueError, IndexError):
+            continue
+    
+    return max(chunk_numbers) if chunk_numbers else -1
+
 def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4, image_size=224, aspect_ratio_threshold=0.6):
-    """Process a large dataframe by breaking it into smaller chunks"""
+    """Process a large dataframe by breaking it into smaller chunks with checkpoint support"""
     num_chunks = (len(df) + chunk_size - 1) // chunk_size
+    
+    # Load or create identifiers
+    df = load_or_create_identifiers(df)
+    
+    # Find the last processed chunk
+    last_processed_chunk = get_last_processed_chunk()
+    start_chunk = last_processed_chunk + 1
+    
+    if start_chunk > 0:
+        print(f"Resuming from chunk {start_chunk + 1} of {num_chunks}")
     
     result_dfs = []
     combined_stats = {
@@ -220,8 +274,17 @@ def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4
         'pad_count': 0
     }
     
-    chunk_pbar = tqdm(total=num_chunks, desc="Processing chunks", unit="chunk", position=0)
-    print(f"\nProcessing {len(df)} rows in {num_chunks} chunks of {chunk_size} rows each")
+    # Load previously processed chunks' statistics
+    for i in range(start_chunk):
+        try:
+            chunk_metadata = pd.read_csv(f"cache/image_metadata_{i}.csv")
+            combined_stats['success_count'] += len(chunk_metadata)
+            result_dfs.append(chunk_metadata)
+        except FileNotFoundError:
+            print(f"Warning: Could not find metadata for chunk {i}")
+    
+    chunk_pbar = tqdm(total=num_chunks-start_chunk, desc="Processing chunks", unit="chunk", position=0)
+    print(f"\nProcessing remaining {len(df) - (start_chunk * chunk_size)} rows in {num_chunks-start_chunk} chunks")
     
     processor = ImageProcessor(
         timeout=timeout, 
@@ -230,11 +293,10 @@ def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4
         aspect_ratio_threshold=aspect_ratio_threshold
     )
     
-    for i in range(num_chunks):
+    for i in range(start_chunk, num_chunks):
         start_idx = i * chunk_size
         end_idx = min((i + 1) * chunk_size, len(df))
         chunk_df = df.iloc[start_idx:end_idx].copy()
-        chunk_df['identifier'] = [str(uuid.uuid4()) for _ in range(len(chunk_df))]
         
         processor.reset_stats()
         
@@ -246,13 +308,18 @@ def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4
         chunk_df['original_width'] = chunk_df['identifier'].map(lambda x: resolutions.get(x, (None, None))[0])
         chunk_df['original_height'] = chunk_df['identifier'].map(lambda x: resolutions.get(x, (None, None))[1])
         chunk_df = chunk_df[chunk_df['original_width'].notnull()]
+        
         # Update combined statistics
         combined_stats['download_times'].extend(processor.stats['download_times'])
         combined_stats['failed_downloads'].extend(processor.stats['failed_downloads'])
         combined_stats['success_count'] += processor.stats['success_count']
         combined_stats['crop_count'] += processor.stats['crop_count']
         combined_stats['pad_count'] += processor.stats['pad_count']
-        chunk_df[['image_url', 'capsfusion', 'identifier', 'original_width', 'original_height']].to_csv(f"cache/image_metadata_{i}.csv", index=False)
+        
+        # Save chunk metadata
+        chunk_df[['image_url', 'capsfusion', 'identifier', 'original_width', 'original_height']].to_csv(
+            f"cache/image_metadata_{i}.csv", index=False
+        )
         result_dfs.append(chunk_df[['image_url', 'capsfusion', 'identifier', 'original_width', 'original_height']])
         
         chunk_pbar.update(1)
@@ -260,12 +327,11 @@ def process_dataframe_in_chunks(df, chunk_size=100000, timeout=10, max_workers=4
     
     chunk_pbar.close()
     
+    # Update final statistics
     combined_stats['end_time'] = time.time()
     combined_stats['total_time'] = combined_stats['end_time'] - combined_stats['start_time']
-    combined_stats['average_download_time'] = (
-        sum(combined_stats['download_times']) / len(combined_stats['download_times'])
-        if combined_stats['download_times'] else 0
-    )
+    if combined_stats['download_times']:
+        combined_stats['average_download_time'] = sum(combined_stats['download_times']) / len(combined_stats['download_times'])
     
     final_df = pd.concat(result_dfs, ignore_index=True)
     

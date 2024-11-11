@@ -348,7 +348,7 @@ class EVAVisionTransformer(nn.Module):
                  drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None, patch_dropout=0.,
                  use_abs_pos_emb=True, use_rel_pos_bias=False, use_shared_rel_pos_bias=False, rope=False,
                  use_mean_pooling=True, init_scale=0.001, grad_checkpointing=False, xattn=False, postnorm=False,
-                 pt_hw_seq_len=16, intp_freq=False, naiveswiglu=False, subln=False,
+                 pt_hw_seq_len=16, intp_freq=False, naiveswiglu=False, subln=False, reference_embedding=None, 
                  ):
         super().__init__()
         self.image_size = img_size
@@ -385,6 +385,7 @@ class EVAVisionTransformer(nn.Module):
         self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
 
         self.grad_checkpointing = grad_checkpointing
+        self.reference_embedding = reference_embedding
 
 
     def get_num_layers(self):
@@ -449,8 +450,15 @@ class EVAVisionTransformer(nn.Module):
 
         return features
     
+    @torch.no_grad()
+    def set_reference_embedding(self, x):
+        self.reference_embedding = self(x)[:, 0, :]
+    
+    @torch.no_grad()
     def encode_image(self, x):
         image_embeds = self(x)
+        
+        # Rest of the processing
         n_query = 64
         image_embeds = image_embeds[:, 1:, :]
         b, n, c = image_embeds.shape
@@ -459,4 +467,26 @@ class EVAVisionTransformer(nn.Module):
         stride = int(sqrt_n // (n_query ** 0.5))
         image_embeds = F.avg_pool2d(image_embeds, kernel_size=(stride, stride), stride=stride)
         image_embeds = image_embeds.view(b, c, -1).permute(0, 2, 1).contiguous()
+        
         return image_embeds
+
+    @torch.no_grad()
+    def encode_image_w_similarity(self, x):
+        image_embeds = self(x)
+        
+        # Calculate cosine similarity with reference embedding before processing
+        original_embeds = image_embeds[:, 0, :]
+        cos = nn.CosineSimilarity(dim=-1)
+        similarity = cos(original_embeds, self.reference_embedding)
+        
+        # Rest of the processing
+        n_query = 64
+        image_embeds = image_embeds[:, 1:, :]
+        b, n, c = image_embeds.shape
+        sqrt_n = int(n**0.5)
+        image_embeds = image_embeds.permute(0, 2, 1).view(b, c, sqrt_n, sqrt_n)
+        stride = int(sqrt_n // (n_query ** 0.5))
+        image_embeds = F.avg_pool2d(image_embeds, kernel_size=(stride, stride), stride=stride)
+        image_embeds = image_embeds.view(b, c, -1).permute(0, 2, 1).contiguous()
+        
+        return image_embeds, similarity
