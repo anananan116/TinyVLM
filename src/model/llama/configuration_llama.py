@@ -218,6 +218,7 @@ class VLMConfig(LlamaConfig):
         adjust_embedding_len=None,
         special_token_map=None,
         flashattention=False,
+        encoded_image_dimention=1792,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -234,3 +235,4 @@ class VLMConfig(LlamaConfig):
         self.flashattention = flashattention
         if self.flashattention:
             self._attn_implementation = "flash_attention_2"
+        self.encoded_image_dimention = encoded_image_dimention

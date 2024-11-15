@@ -13,7 +13,7 @@ class VLMTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """
         Compute the loss for the given inputs.
         """
@@ -32,7 +32,7 @@ class VLMTrainer(Trainer):
         
         dataloader = self.get_eval_dataloader()
         
-        metrics = evaluate_caption(self.model, dataloader, self.accelerator)
+        metrics = evaluate_caption(self.model, dataloader, self.accelerator, self.tokenizer)
         
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         self._memory_tracker.stop_and_update_metrics(metrics)

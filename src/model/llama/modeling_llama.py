@@ -48,7 +48,7 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from .configuration_llama import LlamaConfig, RetrievalConfig, VLMConfig
+from .configuration_llama import LlamaConfig, VLMConfig
 
 
 logger = logging.get_logger(__name__)
@@ -1225,6 +1225,38 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             attentions=outputs.attentions,
         )
 
+class AdapterMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        self.gate_proj = nn.Linear(config.encoded_image_dimention, self.intermediate_size, bias=config.mlp_bias)
+        self.up_proj = nn.Linear(config.encoded_image_dimention, self.intermediate_size, bias=config.mlp_bias)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.mlp_bias)
+        self.act_fn = ACT2FN[config.hidden_act]
+
+    def forward(self, x):
+        if self.config.pretraining_tp > 1:
+            slice = self.intermediate_size // self.config.pretraining_tp
+            gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
+            up_proj_slices = self.up_proj.weight.split(slice, dim=0)
+            down_proj_slices = self.down_proj.weight.split(slice, dim=1)
+
+            gate_proj = torch.cat(
+                [F.linear(x, gate_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
+            )
+            up_proj = torch.cat([F.linear(x, up_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1)
+
+            intermediate_states = (self.act_fn(gate_proj) * up_proj).split(slice, dim=2)
+            down_proj = [
+                F.linear(intermediate_states[i], down_proj_slices[i]) for i in range(self.config.pretraining_tp)
+            ]
+            down_proj = sum(down_proj)
+        else:
+            down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+
+        return down_proj
 
 class AtriVLM(LlamaForCausalLM):
     def __init__(self, config: VLMConfig):
@@ -1236,7 +1268,7 @@ class AtriVLM(LlamaForCausalLM):
             self.image_token_id = config.special_token_map['Image_Token'][1]
         else:
             raise ValueError("Special token map not found")
-        self.image_adapter = LlamaMLP(config)
+        self.image_adapter = AdapterMLP(config)
         
     def forward(self, input_ids, encoded_image, labels, **kwargs):
         """
@@ -1247,14 +1279,16 @@ class AtriVLM(LlamaForCausalLM):
             encoded_image (torch.FloatTensor): Encoded image features of shape (batch_size, num_patches, hidden_dim)
             labels (torch.LongTensor): Labels for computing the language modeling loss
         """
+        encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
-        
+
         # Get embeddings for all input tokens
         token_embeddings = self.get_input_embeddings()(input_ids)
         
         # Find positions of image tokens and replace them with processed image embeddings
         image_token_positions = (input_ids == self.image_token_id).nonzero(as_tuple=True)
+        token_embeddings = token_embeddings
         token_embeddings[image_token_positions] = processed_image.reshape(-1, processed_image.size(-1))
         
         # Call the native forward method with the modified embeddings
@@ -1277,6 +1311,7 @@ class AtriVLM(LlamaForCausalLM):
         Returns:
             past_key_values: Tuple containing the key and value states to be used for subsequent generation
         """
+        encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
         

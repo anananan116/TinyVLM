@@ -10,17 +10,24 @@ class CustomTrainingArgs(TrainingArguments):
     output_dir: str = field(
         default="results/outputs/pretrain",
     )
-
+    learning_rate: float = field(
+        default=3e-5,
+        metadata={'help': 'Learning rate.'}
+    )
     per_device_train_batch_size: int = field(
-        default=64,
+        default=16,
         metadata={'help': 'Train batch size.'}
     )
     per_device_eval_batch_size: int = field(
-        default=128,
+        default=64,
         metadata={'help': 'Evaluation batch size.'}
     )
+    gradient_accumulation_steps: int = field(
+        default=4,
+        metadata={'help': 'Gradient accumulation steps.'}
+    )
     bf16: bool = field(
-        default=True,
+        default=False,
         metadata={'help': 'Use BF16?'}
     )
     fp16: bool = field(
@@ -32,19 +39,19 @@ class CustomTrainingArgs(TrainingArguments):
         metadata={'help': 'Strategy for evaluation.'}
     )
     eval_steps: int = field(
-        default=500,
+        default=200,
         metadata={'help': 'Number of steps between evaluations.'}
     )
     logging_steps: int = field(
-        default=150,
+        default=50,
         metadata={'help': 'Number of steps between logs.'}
     )
     save_steps: int = field(
-        default=5000,
+        default=1000,
         metadata={'help': 'Number of steps between saves.'}
     )
     save_total_limit: int = field(
-        default=2,
+        default=3,
         metadata={'help': 'Number of saves to keep.'}
     )
     save_strategy: str = field(
@@ -82,7 +89,7 @@ class VLMTrainingArguments:
     )
     
     data_amount: int = field(
-        default=10,
+        default=1,
         metadata={'help': 'Amount of data partitions to be used. One partition usually contains ~75k samples.'}
     )
     
@@ -96,6 +103,11 @@ class VLMTrainingArguments:
         metadata={'help': 'Maximum length of input sequences.'}
     )
     
+    num_patches: int = field(
+        default=64,
+        metadata={'help': 'Number of patches in an image.'}
+    )
+    
 @dataclass
 class ModelArguments:
     special_token_config: Optional[str] = field(
@@ -104,7 +116,7 @@ class ModelArguments:
     )
     
     model_config_path: str = field(
-        default='configs/Multihop/llama_full.yaml',
+        default='configs/VLM/llama_full.yaml',
         metadata={'help': 'Path to model config file.'}
     )
     

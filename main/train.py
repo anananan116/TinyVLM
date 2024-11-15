@@ -38,7 +38,7 @@ def main():
         setattr(training_args, key, value)
     is_main_process = dist.get_rank() == 0
     if is_main_process:
-        logger.info(f"Training arguments: {training_args}")
+        print(f"Training arguments: {training_args}")
     model_args_path = model_args.model_config_path
     additional_tokens_path =  model_args.special_token_config
     flashattention = False
@@ -55,7 +55,6 @@ def main():
     model, tokenizer, special_token_map = get_model_and_tokenizer(model_args, additional_tokens_dict)
     if is_main_process:
         logger.info(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
-    
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_token_id = tokenizer.eos_token_id
 
@@ -64,6 +63,7 @@ def main():
     collate_fn = data.get_collator()
     trainer = VLMTrainer(
         model=model,
+        tokenizer=tokenizer,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,

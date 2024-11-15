@@ -11,16 +11,15 @@ from tqdm import tqdm
 np.random.seed(42)
 
 class VLMDataset(Dataset):
-    def __init__(self, data_path: str, encoded_images_file_path: str):
-        self.data_path = data_path
+    def __init__(self, data, encoded_images_file_path: str):
         self.encoded_images_file_path = encoded_images_file_path
-        self.data = []
+        self.data = data
     
     def __len__(self):
         return len(self.data)
     
     def __getitem__(self, idx):
-        data = self.data[idx]
+        data = self.data.iloc[idx]
         file_path = os.path.join(self.encoded_images_file_path, data["identifier"]+".npy")
         image = np.load(file_path)
         caption = data["capsfusion"]
@@ -31,10 +30,11 @@ class VLMCollator():
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.special_token_map = special_token_map
-        self.image_start_token = self.special_token_map["image_start_token"][0]
-        self.image_end_token = self.special_token_map["image_end_token"][0]
-        self.caption_start_token = self.special_token_map["caption_start_token"][0]
-        self.caption_start_id = self.special_token_map["caption_start_token"][1]
+        self.image_start_token = self.special_token_map["Image"][0]
+        self.image_end_token = self.special_token_map["Image_End"][0]
+        self.caption_start_token = self.special_token_map["Caption"][0]
+        self.caption_start_id = self.special_token_map["Caption"][1]
+        self.image_token = self.special_token_map["Image_Token"][0]
         self.num_patches = num_patches
     
     def __call__(self, batch):
@@ -42,11 +42,18 @@ class VLMCollator():
         images = torch.tensor(np.array(images))
         
         # Format captions with special tokens and space for image tokens
-        image_placeholder = " ".join(["<image_token>"] * self.num_patches)
+        image_placeholder = "".join([self.image_token] * self.num_patches)
         formatted_captions = [f"{self.image_start_token}{image_placeholder}{self.image_end_token}\n{self.caption_start_token}{caption}" for caption in captions]
         
         # Encode captions
-        encoded_captions = self.tokenizer(formatted_captions, max_length=self.max_length, padding="max_length", truncation=True, return_tensors="pt")
+        encoded_captions = self.tokenizer(
+            formatted_captions,
+            max_length=self.max_length,
+            padding="longest",
+            truncation=True,
+            return_tensors="pt",
+            padding_side="right"
+        )
         
         # Create labels tensor
         labels = encoded_captions["input_ids"].clone()
@@ -69,9 +76,10 @@ class VLMCollator():
         eval_encoded_prompts = self.tokenizer(
             eval_prompts, 
             max_length=self.max_length, 
-            padding="max_length", 
+            padding="longest", 
             truncation=True, 
-            return_tensors="pt"
+            return_tensors="pt",
+            padding_side="right"
         )
         
         return {
@@ -91,18 +99,21 @@ class VLMData():
         self.num_data_partitions = args.data_amount
         self.num_patches = args.num_patches
         self.data = []
-        is_main_process = get_rank() == 0
+        try:
+            is_main_process = get_rank() == 0
+        except:
+            is_main_process = True
         if is_main_process:
             print(f"Loading {args.data_amount} partitions from {self.data_path}")
             for i in tqdm(range(self.num_data_partitions)):
                 data_partition = f"{self.data_path}/image_metadata_{i}_filtered.csv"
-                one_partition = pd.read_csv(data_partition)["identifier", "capsfusion"]
+                one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
                 self.data.append(one_partition)
             print("Data loaded")
         else:
             for i in range(self.num_data_partitions):
                 data_partition = f"{self.data_path}/image_metadata_{i}_filtered.csv"
-                one_partition = pd.read_csv(data_partition)["identifier", "capsfusion"]
+                one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
                 self.data.append(one_partition)
         self.data = pd.concat(self.data, axis=0, ignore_index=True)
         self.training_indices = np.random.choice(self.data.index, int(len(self.data) * (1 - args.validation_proportion)), replace=False)
