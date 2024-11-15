@@ -11,7 +11,7 @@ class CustomTrainingArgs(TrainingArguments):
         default="results/outputs/pretrain",
     )
     learning_rate: float = field(
-        default=1.5e-5,
+        default=1e-5,
         metadata={'help': 'Learning rate.'}
     )
     per_device_train_batch_size: int = field(
