@@ -25,7 +25,7 @@ class VLMDataset(Dataset):
         caption = data["capsfusion"]
         return image, caption
 
-class VLMCollator():
+class VLMCollator:
     def __init__(self, tokenizer: PreTrainedTokenizer, max_length: int, special_token_map: dict, num_patches: int):
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -36,42 +36,56 @@ class VLMCollator():
         self.caption_start_id = self.special_token_map["Caption"][1]
         self.image_token = self.special_token_map["Image_Token"][0]
         self.num_patches = num_patches
-    
+        self.eos_token_id = self.tokenizer.eos_token_id
+        self.pad_token_id = self.tokenizer.pad_token_id
+
     def __call__(self, batch):
         images, captions = zip(*batch)
         images = torch.tensor(np.array(images))
         
         # Format captions with special tokens and space for image tokens
         image_placeholder = "".join([self.image_token] * self.num_patches)
-        formatted_captions = [f"{self.image_start_token}{image_placeholder}{self.image_end_token}\n{self.caption_start_token}{caption}" for caption in captions]
-        
+        formatted_captions = [
+            f"{self.image_start_token}{image_placeholder}{self.image_end_token}\n{self.caption_start_token}{caption}" 
+            for caption in captions
+        ]
+
         # Encode captions
         encoded_captions = self.tokenizer(
             formatted_captions,
-            max_length=self.max_length,
-            padding="longest",
+            max_length=self.max_length - 1,  # Leave space for eos_token
+            padding=True,
             truncation=True,
             return_tensors="pt",
-            padding_side="right"
         )
-        
+
+        # Append eos_token_id to the end of input_ids
+        input_ids = torch.cat(
+            [encoded_captions["input_ids"], torch.full((encoded_captions["input_ids"].shape[0], 1), self.eos_token_id, dtype=torch.long)],
+            dim=1
+        )
+
         # Create labels tensor
-        labels = encoded_captions["input_ids"].clone()
-        
+        labels = input_ids.clone()
+
         # For each sequence in the batch
         for i in range(labels.shape[0]):
             # Find position of caption_start_token
             caption_start_pos = (labels[i] == self.caption_start_id).nonzero(as_tuple=True)[0][0]
-            
+
             # Set all tokens before caption (including caption_start_token) to -100
             labels[i, :caption_start_pos + 1] = -100
-            
-            # Set padding tokens to -100
-            padding_mask = encoded_captions["input_ids"][i] == self.tokenizer.pad_token_id
-            labels[i, padding_mask] = -100
-        
-        eval_prompts = [f"{self.image_start_token}{image_placeholder}{self.image_end_token}\n{self.caption_start_token}" for _ in captions]
-        
+
+            # The first eos_token should not be -100
+            eos_pos = (labels[i] == self.eos_token_id).nonzero(as_tuple=True)[0]
+            if eos_pos.numel() > 0:
+                labels[i, eos_pos[0] + 1:] = -100  # Set padding eos tokens to -100
+
+        eval_prompts = [
+            f"{self.image_start_token}{image_placeholder}{self.image_end_token}\n{self.caption_start_token}"
+            for _ in captions
+        ]
+
         # Encode prompts
         eval_encoded_prompts = self.tokenizer(
             eval_prompts, 
@@ -81,10 +95,10 @@ class VLMCollator():
             return_tensors="pt",
             padding_side="right"
         )
-        
+
         return {
             "encoded_image": images,
-            "input_ids": encoded_captions["input_ids"],
+            "input_ids": input_ids,
             "labels": labels,
             "reference_captions": captions,
             "eval_input_ids": eval_encoded_prompts["input_ids"],
