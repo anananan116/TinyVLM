@@ -20,8 +20,8 @@ def parse_args():
                         help='Directory to save filtered CSV file')
     parser.add_argument('--reference_image', type=str, default="../reference.jpg",
                         help='Path to reference image for similarity calculation')
-    parser.add_argument('--similarity_threshold', type=float, default=0.1,
-                        help='Similarity threshold for filtering (default: 0.15)')
+    parser.add_argument('--similarity_threshold', type=float, default=0.18,
+                        help='Similarity threshold for filtering (default: 0.18)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for processing (default: 32)')
     parser.add_argument('--image_dir', type=str, default='../images',
@@ -96,6 +96,7 @@ class ImageBatchDataset(Dataset):
 def batch_inference(model, csv_path: str, image_dir: str, output_dir: str, filtered_csv_dir: str, 
                    similarity_threshold: float, batch_size: int = 32):
     # Create output directories if they don't exist
+    print(f"Threshold: {similarity_threshold}")
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(filtered_csv_dir, exist_ok=True)
     

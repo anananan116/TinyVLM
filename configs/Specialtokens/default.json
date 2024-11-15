@@ -1,0 +1,24 @@
+{
+    "added_tokens": [
+        {
+            "type": "Image",
+            "token": "<Image>",
+            "value": "Flexible"
+        },
+        {
+            "type": "Image_End",
+            "token": "<Image_End>",
+            "value": "Flexible"
+        },
+        {
+            "type": "Caption",
+            "token": "<Caption>",
+            "value": "Flexible"
+        },
+        {
+            "type": "Image_Token",
+            "token": "<Image_Token>",
+            "value": "Flexible"
+        }
+    ]
+}
