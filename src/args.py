@@ -19,7 +19,7 @@ class CustomTrainingArgs(TrainingArguments):
         metadata={'help': 'Train batch size.'}
     )
     per_device_eval_batch_size: int = field(
-        default=64,
+        default=1,
         metadata={'help': 'Evaluation batch size.'}
     )
     gradient_accumulation_steps: int = field(
