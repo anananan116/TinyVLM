@@ -160,7 +160,7 @@ First, we address a common issue in large-scale web-scraped image datasets - the
 Our solution:
 
 - Uses a reference image that represents a typical "image not available" placeholder
-- Computes CLIP embeddings for this reference image
+- Computes CLIP embeddings for this reference image and extract the \<CLS\> position, which represent the overall semantic of the image. (No extra computation cost since it's originaly a part of image encoding).
 - Calculates cosine similarity between each dataset image and the reference
 - Filters out images that exceed a similarity threshold of 0.3, effectively removing various forms of placeholder images
 
@@ -204,7 +204,7 @@ Our system builds upon the Llama architecture, a transformer-based language mode
 The model processes text using a conventional token embedding layer, but is enhanced with special tokens for handling image inputs:
 
 - `<IMAGE>`: Marks the start of image content
-- `<Image_Token>`: Represents individual image patch embeddings
+- `<Image_Token>`: Represents individual image patch embeddings (place holder)
 - `<IMAGE_END>`: Marks the end of image content
 
 ### Vision-Language Adaptation
