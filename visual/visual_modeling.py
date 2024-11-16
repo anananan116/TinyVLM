@@ -1,491 +1,1124 @@
-# --------------------------------------------------------
-# Adapted from  https://github.com/microsoft/unilm/tree/master/beit
-# --------------------------------------------------------
+# coding=utf-8
+# Copyright 2021 The OpenAI Team Authors and The HuggingFace Team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""PyTorch CLIP model."""
 
-import os
-from functools import partial
+from dataclasses import dataclass
+from typing import Any, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
+import torch.utils.checkpoint
+from torch import nn
+from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 
-try:
-    from timm.models.layers import drop_path, to_2tuple
-except:
-    from timm.layers import drop_path, to_2tuple
+from transformers.activations import ACT2FN
+from transformers.modeling_attn_mask_utils import _create_4d_causal_attention_mask, _prepare_4d_attention_mask
+from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, ImageClassifierOutput
+from transformers.modeling_utils import PreTrainedModel
+from transformers.pytorch_utils import is_torch_greater_or_equal_than_2_2
+from transformers.utils import (
+    ModelOutput,
+    add_code_sample_docstrings,
+    add_start_docstrings,
+    add_start_docstrings_to_model_forward,
+    is_flash_attn_2_available,
+    is_flash_attn_greater_or_equal_2_10,
+    logging,
+    replace_return_docstrings,
+    torch_int,
+)
+from configuration_clip import CLIPConfig, CLIPTextConfig, CLIPVisionConfig
 
-try:
-    import xformers.ops as xops
-except ImportError:
-    xops = None
-    print("Please 'pip install xformers'")
+
+if is_flash_attn_2_available():
+    from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
 
-class PatchDropout(nn.Module):
+logger = logging.get_logger(__name__)
+
+# General docstring
+_CONFIG_FOR_DOC = "CLIPConfig"
+_CHECKPOINT_FOR_DOC = "openai/clip-vit-base-patch32"
+
+# Image classification docstring
+_IMAGE_CLASS_CHECKPOINT = "openai/clip-vit-base-patch32"
+_IMAGE_CLASS_EXPECTED_OUTPUT = "LABEL_0"
+
+
+# contrastive loss function, adapted from
+# https://sachinruk.github.io/blog/2021-03-07-clip.html
+def contrastive_loss(logits: torch.Tensor) -> torch.Tensor:
+    return nn.functional.cross_entropy(logits, torch.arange(len(logits), device=logits.device))
+
+
+def clip_loss(similarity: torch.Tensor) -> torch.Tensor:
+    caption_loss = contrastive_loss(similarity)
+    image_loss = contrastive_loss(similarity.t())
+    return (caption_loss + image_loss) / 2.0
+
+
+def _get_vector_norm(tensor: torch.Tensor) -> torch.Tensor:
     """
-    https://arxiv.org/abs/2212.00794
+    This method is equivalent to tensor.norm(p=2, dim=-1, keepdim=True) and used to make
+    model `executorch` exportable. See issue https://github.com/pytorch/executorch/issues/3566
+    """
+    square_tensor = torch.pow(tensor, 2)
+    sum_tensor = torch.sum(square_tensor, dim=-1, keepdim=True)
+    normed_tensor = torch.pow(sum_tensor, 0.5)
+    return normed_tensor
+
+
+@dataclass
+class CLIPVisionModelOutput(ModelOutput):
+    """
+    Base class for vision model's outputs that also contains image embeddings of the pooling of the last hidden states.
+
+    Args:
+        image_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim)` *optional* returned when model is initialized with `with_projection=True`):
+            The image embeddings obtained by applying the projection layer to the pooler_output.
+        last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
+            Sequence of hidden-states at the output of the last layer of the model.
+        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
+            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
+            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
+
+            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
+        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
+            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
+            sequence_length)`.
+
+            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
+            heads.
     """
 
-    def __init__(self, prob, exclude_first_token=True):
+    image_embeds: Optional[torch.FloatTensor] = None
+    last_hidden_state: torch.FloatTensor = None
+    hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
+    attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
+
+
+@dataclass
+class CLIPTextModelOutput(ModelOutput):
+    """
+    Base class for text model's outputs that also contains a pooling of the last hidden states.
+
+    Args:
+        text_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim)` *optional* returned when model is initialized with `with_projection=True`):
+            The text embeddings obtained by applying the projection layer to the pooler_output.
+        last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
+            Sequence of hidden-states at the output of the last layer of the model.
+        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
+            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
+            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
+
+            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
+        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
+            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
+            sequence_length)`.
+
+            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
+            heads.
+    """
+
+    text_embeds: Optional[torch.FloatTensor] = None
+    last_hidden_state: torch.FloatTensor = None
+    hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
+    attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
+
+
+@dataclass
+class CLIPOutput(ModelOutput):
+    """
+    Args:
+        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `return_loss` is `True`):
+            Contrastive loss for image-text similarity.
+        logits_per_image (`torch.FloatTensor` of shape `(image_batch_size, text_batch_size)`):
+            The scaled dot product scores between `image_embeds` and `text_embeds`. This represents the image-text
+            similarity scores.
+        logits_per_text (`torch.FloatTensor` of shape `(text_batch_size, image_batch_size)`):
+            The scaled dot product scores between `text_embeds` and `image_embeds`. This represents the text-image
+            similarity scores.
+        text_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim`):
+            The text embeddings obtained by applying the projection layer to the pooled output of [`CLIPTextModel`].
+        image_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim`):
+            The image embeddings obtained by applying the projection layer to the pooled output of [`CLIPVisionModel`].
+        text_model_output (`BaseModelOutputWithPooling`):
+            The output of the [`CLIPTextModel`].
+        vision_model_output (`BaseModelOutputWithPooling`):
+            The output of the [`CLIPVisionModel`].
+    """
+
+    loss: Optional[torch.FloatTensor] = None
+    logits_per_image: torch.FloatTensor = None
+    logits_per_text: torch.FloatTensor = None
+    text_embeds: torch.FloatTensor = None
+    image_embeds: torch.FloatTensor = None
+    text_model_output: BaseModelOutputWithPooling = None
+    vision_model_output: BaseModelOutputWithPooling = None
+
+    def to_tuple(self) -> Tuple[Any]:
+        return tuple(
+            self[k] if k not in ["text_model_output", "vision_model_output"] else getattr(self, k).to_tuple()
+            for k in self.keys()
+        )
+
+
+class CLIPVisionEmbeddings(nn.Module):
+    def __init__(self, config: CLIPVisionConfig):
         super().__init__()
-        assert 0 <= prob < 1.
-        self.prob = prob
-        self.exclude_first_token = exclude_first_token  # exclude CLS token
-        print(f"os.getenv('RoPE')={os.getenv('RoPE')}")
+        self.config = config
+        self.embed_dim = config.hidden_size
+        self.image_size = config.image_size
+        self.patch_size = config.patch_size
 
-    def forward(self, x):
-        if not self.training or self.prob == 0.:
-            return x
+        self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
 
-        if self.exclude_first_token:
-            cls_tokens, x = x[:, :1], x[:, 1:]
+        self.patch_embedding = nn.Conv2d(
+            in_channels=config.num_channels,
+            out_channels=self.embed_dim,
+            kernel_size=self.patch_size,
+            stride=self.patch_size,
+            bias=False,
+        )
+
+        self.num_patches = (self.image_size // self.patch_size) ** 2
+        self.num_positions = self.num_patches + 1
+        self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
+        self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
+
+    def interpolate_pos_encoding(self, embeddings: torch.Tensor, height: int, width: int) -> torch.Tensor:
+        """
+        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher resolution
+        images. This method is also adapted to support torch.jit tracing.
+
+        Adapted from:
+        - https://github.com/facebookresearch/dino/blob/de9ee3df6cf39fac952ab558447af1fa1365362a/vision_transformer.py#L174-L194, and
+        - https://github.com/facebookresearch/dinov2/blob/e1277af2ba9496fbadf7aec6eba56e8d882d1e35/dinov2/models/vision_transformer.py#L179-L211
+        """
+
+        num_patches = embeddings.shape[1] - 1
+        position_embedding = self.position_embedding.weight.unsqueeze(0)
+        num_positions = position_embedding.shape[1] - 1
+
+        # always interpolate when tracing to ensure the exported model works for dynamic input shapes
+        if not torch.jit.is_tracing() and num_patches == num_positions and height == width:
+            return self.position_embedding(self.position_ids)
+
+        class_pos_embed = position_embedding[:, :1]
+        patch_pos_embed = position_embedding[:, 1:]
+
+        dim = embeddings.shape[-1]
+
+        new_height = height // self.patch_size
+        new_width = width // self.patch_size
+
+        sqrt_num_positions = torch_int(num_positions**0.5)
+        patch_pos_embed = patch_pos_embed.reshape(1, sqrt_num_positions, sqrt_num_positions, dim)
+        patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
+
+        patch_pos_embed = nn.functional.interpolate(
+            patch_pos_embed,
+            size=(new_height, new_width),
+            mode="bicubic",
+            align_corners=False,
+        )
+
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+
+        return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
+
+    def forward(self, pixel_values: torch.FloatTensor, interpolate_pos_encoding=False) -> torch.Tensor:
+        batch_size, _, height, width = pixel_values.shape
+        if not interpolate_pos_encoding and (height != self.image_size or width != self.image_size):
+            raise ValueError(
+                f"Input image size ({height}*{width}) doesn't match model" f" ({self.image_size}*{self.image_size})."
+            )
+        target_dtype = self.patch_embedding.weight.dtype
+        patch_embeds = self.patch_embedding(pixel_values.to(dtype=target_dtype))  # shape = [*, width, grid, grid]
+        patch_embeds = patch_embeds.flatten(2).transpose(1, 2)
+
+        class_embeds = self.class_embedding.expand(batch_size, 1, -1)
+        embeddings = torch.cat([class_embeds, patch_embeds], dim=1)
+        if interpolate_pos_encoding:
+            embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width)
         else:
-            cls_tokens = torch.jit.annotate(torch.Tensor, x[:, :1])
-
-        batch = x.size()[0]
-        num_tokens = x.size()[1]
-
-        batch_indices = torch.arange(batch)
-        batch_indices = batch_indices[..., None]
-
-        keep_prob = 1 - self.prob
-        num_patches_keep = max(1, int(num_tokens * keep_prob))
-
-        rand = torch.randn(batch, num_tokens)
-        patch_indices_keep = rand.topk(num_patches_keep, dim=-1).indices
-
-        x = x[batch_indices, patch_indices_keep]
-
-        if self.exclude_first_token:
-            x = torch.cat((cls_tokens, x), dim=1)
-
-        if self.training and os.getenv('RoPE') == '1':
-            return x, patch_indices_keep
-
-        return x
-
-class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
-    """
-    def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
-
-    def forward(self, x):
-        return drop_path(x, self.drop_prob, self.training)
-    
-    def extra_repr(self) -> str:
-        return 'p={}'.format(self.drop_prob)
+            embeddings = embeddings + self.position_embedding(self.position_ids)
+        return embeddings
 
 
-class Mlp(nn.Module):
-    def __init__(
-        self, 
-        in_features, 
-        hidden_features=None, 
-        out_features=None, 
-        act_layer=nn.GELU, 
-        norm_layer=nn.LayerNorm, 
-        drop=0.,
-        subln=False,
-
-        ):
+class CLIPTextEmbeddings(nn.Module):
+    def __init__(self, config: CLIPTextConfig):
         super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
+        embed_dim = config.hidden_size
 
-        self.ffn_ln = norm_layer(hidden_features) if subln else nn.Identity()
+        self.token_embedding = nn.Embedding(config.vocab_size, embed_dim)
+        self.position_embedding = nn.Embedding(config.max_position_embeddings, embed_dim)
 
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
+        # position_ids (1, len position emb) is contiguous in memory and exported when serialized
+        self.register_buffer(
+            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        )
 
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        # x = self.drop(x)
-        # commit this for the orignal BERT implement 
-        x = self.ffn_ln(x)
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+    ) -> torch.Tensor:
+        seq_length = input_ids.shape[-1] if input_ids is not None else inputs_embeds.shape[-2]
 
-        x = self.fc2(x)
-        x = self.drop(x)
-        return x
+        if position_ids is None:
+            position_ids = self.position_ids[:, :seq_length]
 
-class SwiGLU(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.SiLU, drop=0., 
-                norm_layer=nn.LayerNorm, subln=False):
+        if inputs_embeds is None:
+            inputs_embeds = self.token_embedding(input_ids)
+
+        position_embeddings = self.position_embedding(position_ids)
+        embeddings = inputs_embeds + position_embeddings
+
+        return embeddings
+
+
+class CLIPAttention(nn.Module):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __init__(self, config):
         super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
+        self.config = config
+        self.embed_dim = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = self.embed_dim // self.num_heads
+        if self.head_dim * self.num_heads != self.embed_dim:
+            raise ValueError(
+                f"embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`:"
+                f" {self.num_heads})."
+            )
+        self.scale = self.head_dim**-0.5
+        self.dropout = config.attention_dropout
 
-        self.w1 = nn.Linear(in_features, hidden_features)
-        self.w2 = nn.Linear(in_features, hidden_features)
+        self.k_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.v_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.q_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.out_proj = nn.Linear(self.embed_dim, self.embed_dim)
 
-        self.act = act_layer()
-        self.ffn_ln = norm_layer(hidden_features) if subln else nn.Identity()
-        self.w3 = nn.Linear(hidden_features, out_features)
-        
-        self.drop = nn.Dropout(drop)
+    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
-    def forward(self, x):
-        x1 = self.w1(x)
-        x2 = self.w2(x)
-        hidden = self.act(x1) * x2
-        x = self.ffn_ln(hidden)
-        x = self.w3(x)
-        x = self.drop(x)
-        return x
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        causal_attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Input shape: Batch x Time x Channel"""
 
-class Attention(nn.Module):
-    def __init__(
-            self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0.,
-            proj_drop=0., window_size=None, attn_head_dim=None, xattn=False, rope=None, subln=False, norm_layer=nn.LayerNorm):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        if attn_head_dim is not None:
-            head_dim = attn_head_dim
-        all_head_dim = head_dim * self.num_heads
-        self.scale = qk_scale or head_dim ** -0.5
+        bsz, tgt_len, embed_dim = hidden_states.size()
 
-        self.subln = subln
-        if self.subln:
-            self.q_proj = nn.Linear(dim, all_head_dim, bias=False)
-            self.k_proj = nn.Linear(dim, all_head_dim, bias=False)
-            self.v_proj = nn.Linear(dim, all_head_dim, bias=False)
-        else:
-            if qkv_bias:
-                self.qkv = nn.Linear(dim, all_head_dim * 3, bias=True)
-            else:
-                self.qkv = nn.Linear(dim, all_head_dim * 3, bias=False)
+        # get query proj
+        query_states = self.q_proj(hidden_states) * self.scale
+        key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
+        value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
 
-        # if qkv_bias:
-        #     self.q_bias = nn.Parameter(torch.zeros(all_head_dim))
-        #     self.v_bias = nn.Parameter(torch.zeros(all_head_dim))
-        # else:
-        #     self.q_bias = None
-        #     self.v_bias = None
+        proj_shape = (bsz * self.num_heads, -1, self.head_dim)
+        query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
+        key_states = key_states.view(*proj_shape)
+        value_states = value_states.view(*proj_shape)
 
-        self.window_size = None
-        self.relative_position_bias_table = None
-        self.relative_position_index = None
+        src_len = key_states.size(1)
+        attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
 
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.inner_attn_ln = norm_layer(all_head_dim) if subln else nn.Identity()
-        # self.proj = nn.Linear(all_head_dim, all_head_dim)
-        self.proj = nn.Linear(all_head_dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-        self.xattn = xattn
-        self.xattn_drop = attn_drop
+        if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
+            raise ValueError(
+                f"Attention weights should be of size {(bsz * self.num_heads, tgt_len, src_len)}, but is"
+                f" {attn_weights.size()}"
+            )
 
-        self.rope = rope
-
-    def forward(self, x, rel_pos_bias=None, attn_mask=None):
-        B, N, C = x.shape
-        if self.subln: 
-            q = F.linear(input=x, weight=self.q_proj.weight, bias=self.q_bias)
-            k = F.linear(input=x, weight=self.k_proj.weight, bias=None)
-            v = F.linear(input=x, weight=self.v_proj.weight, bias=self.v_bias)
-
-            q = q.reshape(B, N, self.num_heads, -1).permute(0, 2, 1, 3)     # B, num_heads, N, C
-            k = k.reshape(B, N, self.num_heads, -1).permute(0, 2, 1, 3)  
-            v = v.reshape(B, N, self.num_heads, -1).permute(0, 2, 1, 3) 
-        else: 
-
-            # qkv_bias = None
-            # if self.q_bias is not None:
-            #     qkv_bias = torch.cat((self.q_bias, torch.zeros_like(self.v_bias, requires_grad=False), self.v_bias))
-            
-            # qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
-
-            qkv = self.qkv(x)
-
-            qkv = qkv.reshape(B, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)   # 3, B, num_heads, N, C
-            q, k, v = qkv[0], qkv[1], qkv[2]
-
-        if self.rope:
-            q_t = q[:, :, 1:, :]
-            ro_q_t = self.rope(q_t)
-            q = torch.cat((q[:, :, :1, :], ro_q_t), -2).type_as(v)
-
-            k_t = k[:, :, 1:, :]
-            ro_k_t = self.rope(k_t)
-            k = torch.cat((k[:, :, :1, :], ro_k_t), -2).type_as(v)
-
-        if self.xattn:
-            q = q.permute(0, 2, 1, 3)   # B, num_heads, N, C -> B, N, num_heads, C
-            k = k.permute(0, 2, 1, 3)
-            v = v.permute(0, 2, 1, 3)
-
-            x = xops.memory_efficient_attention(
-                q, k, v,
-                p=self.xattn_drop,
-                scale=self.scale,
+        # apply the causal_attention_mask first
+        if causal_attention_mask is not None:
+            if causal_attention_mask.size() != (bsz, 1, tgt_len, src_len):
+                raise ValueError(
+                    f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is"
+                    f" {causal_attention_mask.size()}"
                 )
-            x = x.reshape(B, N, -1)
-            x = self.inner_attn_ln(x)
-            x = self.proj(x)
-            x = self.proj_drop(x)
+            attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + causal_attention_mask
+            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        if attention_mask is not None:
+            if attention_mask.size() != (bsz, 1, tgt_len, src_len):
+                raise ValueError(
+                    f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
+                )
+            attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
+            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+
+        if output_attentions:
+            # this operation is a bit akward, but it's required to
+            # make sure that attn_weights keeps its gradient.
+            # In order to do so, attn_weights have to reshaped
+            # twice and have to be reused in the following
+            attn_weights_reshaped = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+            attn_weights = attn_weights_reshaped.view(bsz * self.num_heads, tgt_len, src_len)
         else:
-            q = q * self.scale
-            attn = (q @ k.transpose(-2, -1))
+            attn_weights_reshaped = None
 
-            if self.relative_position_bias_table is not None:
-                relative_position_bias = \
-                    self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-                        self.window_size[0] * self.window_size[1] + 1,
-                        self.window_size[0] * self.window_size[1] + 1, -1)  # Wh*Ww,Wh*Ww,nH
-                relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-                attn = attn + relative_position_bias.unsqueeze(0).type_as(attn)
+        attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
 
-            if rel_pos_bias is not None:
-                attn = attn + rel_pos_bias.type_as(attn)
+        attn_output = torch.bmm(attn_probs, value_states)
 
-            if attn_mask is not None:
-                attn_mask = attn_mask.bool()
-                attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
-            
-            attn = attn.softmax(dim=-1)
-            attn = self.attn_drop(attn)
-
-            x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
-            x = self.inner_attn_ln(x)
-            x = self.proj(x)
-            x = self.proj_drop(x)
-        return x
-
-
-class Block(nn.Module):
-
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 window_size=None, attn_head_dim=None, xattn=False, rope=None, postnorm=False,
-                 subln=False, naiveswiglu=False):
-        super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = Attention(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            attn_drop=attn_drop, proj_drop=drop, window_size=window_size, attn_head_dim=attn_head_dim,
-            xattn=xattn, rope=rope, subln=subln, norm_layer=norm_layer)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-
-        if naiveswiglu:
-            self.mlp = SwiGLU(
-                in_features=dim, 
-                hidden_features=mlp_hidden_dim, 
-                subln=subln,
-                norm_layer=norm_layer,
-            )
-        else:
-            self.mlp = Mlp(
-                in_features=dim, 
-                hidden_features=mlp_hidden_dim, 
-                act_layer=act_layer,
-                subln=subln,
-                drop=drop
+        if attn_output.size() != (bsz * self.num_heads, tgt_len, self.head_dim):
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.num_heads, tgt_len, self.head_dim)}, but is"
+                f" {attn_output.size()}"
             )
 
-        if init_values is not None and init_values > 0:
-            self.gamma_1 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
-            self.gamma_2 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
-        else:
-            self.gamma_1, self.gamma_2 = None, None
+        attn_output = attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
+        attn_output = attn_output.transpose(1, 2)
+        attn_output = attn_output.reshape(bsz, tgt_len, embed_dim)
 
-        self.postnorm = postnorm
+        attn_output = self.out_proj(attn_output)
 
-    def forward(self, x, rel_pos_bias=None, attn_mask=None):
-        if self.gamma_1 is None:
-            if self.postnorm:
-                x = x + self.drop_path(self.norm1(self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)))
-                x = x + self.drop_path(self.norm2(self.mlp(x)))
-            else:
-                x = x + self.drop_path(self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask))
-                x = x + self.drop_path(self.mlp(self.norm2(x)))
-        else:
-            if self.postnorm:
-                x = x + self.drop_path(self.gamma_1 * self.norm1(self.attn(x, rel_pos_bias=rel_pos_bias, attn_mask=attn_mask)))
-                x = x + self.drop_path(self.gamma_2 * self.norm2(self.mlp(x)))
-            else:
-                x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias, attn_mask=attn_mask))
-                x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
-        return x
+        return attn_output, attn_weights_reshaped
 
 
-class PatchEmbed(nn.Module):
-    """ Image to Patch Embedding
+class CLIPFlashAttention2(CLIPAttention):
     """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
-        super().__init__()
-        img_size = to_2tuple(img_size)
-        patch_size = to_2tuple(patch_size)
-        num_patches = (img_size[1] // patch_size[1]) * (img_size[0] // patch_size[0])
-        self.patch_shape = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.num_patches = num_patches
-
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-
-    def forward(self, x, **kwargs):
-        B, C, H, W = x.shape
-        # FIXME look at relaxing size constraints
-        assert H == self.img_size[0] and W == self.img_size[1], \
-            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        x = self.proj(x).flatten(2).transpose(1, 2)
-        return x
-
-
-class EVAVisionTransformer(nn.Module):
-    """ Vision Transformer with support for patch or hybrid CNN input stage
+    CLIPAttention flash attention module. This module inherits from `CLIPAttention` as the weights of the module stays
+    untouched. The only required change would be on the forward pass where it needs to correctly call the public API of
+    flash attention and deal with padding tokens in case the input contains any of them.
     """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
-                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
-                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None, patch_dropout=0.,
-                 use_abs_pos_emb=True, use_rel_pos_bias=False, use_shared_rel_pos_bias=False, rope=False,
-                 use_mean_pooling=True, init_scale=0.001, grad_checkpointing=False, xattn=False, postnorm=False,
-                 pt_hw_seq_len=16, intp_freq=False, naiveswiglu=False, subln=False, reference_embedding=None, 
-                 ):
+
+    # Copied from transformers.models.llama.modeling_llama.LlamaFlashAttention2.__init__
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # TODO: Should be removed once Flash Attention for RoCm is bumped to 2.1.
+        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignement, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
+        # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
+        self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
+
+    # Adapted from transformers.models.llama.modeling_llama.LlamaFlashAttention2.forward
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        causal_attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        output_attentions = False
+
+        batch_size, q_len, _ = hidden_states.size()
+
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
+
+        # Flash attention requires the input to have the shape
+        # batch_size x seq_length x head_dim x hidden_dim
+        # therefore we just need to keep the original shape
+        query_states = query_states.view(batch_size, q_len, self.num_heads, self.head_dim)
+        key_states = key_states.view(batch_size, q_len, self.num_heads, self.head_dim)
+        value_states = value_states.view(batch_size, q_len, self.num_heads, self.head_dim)
+
+        dropout_rate = self.dropout if self.training else 0.0
+
+        # In PEFT, usually we cast the layer norms in float32 for training stability reasons
+        # therefore the input hidden states gets silently casted in float32. Hence, we need
+        # cast them back in the correct dtype just to be sure everything works as expected.
+        # This might slowdown training & inference so it is recommended to not cast the LayerNorms
+        # in fp32.
+
+        input_dtype = query_states.dtype
+        if input_dtype == torch.float32:
+            if torch.is_autocast_enabled():
+                target_dtype = torch.get_autocast_gpu_dtype()
+            # Handle the case where the model is quantized
+            elif hasattr(self.config, "_pre_quantization_dtype"):
+                target_dtype = self.config._pre_quantization_dtype
+            else:
+                target_dtype = self.q_proj.weight.dtype
+
+            logger.warning_once(
+                f"The input hidden states seems to be silently casted in float32, this might be related to"
+                f" the fact you have upcasted embedding or layer norm layers in float32. We will cast back the input in"
+                f" {target_dtype}."
+            )
+
+            query_states = query_states.to(target_dtype)
+            key_states = key_states.to(target_dtype)
+            value_states = value_states.to(target_dtype)
+
+        attn_output = _flash_attention_forward(
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            q_len,
+            dropout=dropout_rate,
+            is_causal=causal_attention_mask is not None,
+            use_top_left_mask=self._flash_attn_uses_top_left_mask,
+        )
+
+        attn_output = attn_output.reshape(batch_size, q_len, self.embed_dim).contiguous()
+        attn_output = self.out_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return attn_output, attn_weights
+
+
+class CLIPSdpaAttention(CLIPAttention):
+    """
+    SDPA attention module using torch.nn.functional.scaled_dot_product_attention. This module inherits from
+    `CLIPAttention` as the weights of the module stays untouched. The only changes are on the forward pass to adapt to
+    SDPA API.
+    """
+
+    # Adapted from CLIPAttention.forward
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        causal_attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        if output_attentions:
+            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
+            logger.warning_once(
+                "CLIPModel is using CLIPSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not "
+                "support `output_attentions=True`. Falling back to the manual attention implementation, but specifying "
+                "the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can "
+                'be removed using the argument `attn_implementation="eager"` when loading the model.'
+            )
+            return super().forward(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                causal_attention_mask=causal_attention_mask,
+                output_attentions=output_attentions,
+            )
+
+        # CLIP text model uses both `causal_attention_mask` and `attention_mask`
+        if attention_mask is not None and causal_attention_mask is not None:
+            attn_mask = attention_mask + causal_attention_mask
+        elif causal_attention_mask is not None:
+            attn_mask = causal_attention_mask
+        else:
+            attn_mask = attention_mask
+
+        bsz, tgt_len, embed_dim = hidden_states.size()
+
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
+
+        query_states = query_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # SDPA with memory-efficient backend is currently (torch==2.1.2) bugged with non-contiguous inputs with custom attn_mask,
+        # Reference: https://github.com/pytorch/pytorch/issues/112577.
+        if not is_torch_greater_or_equal_than_2_2 and query_states.device.type == "cuda" and attn_mask is not None:
+            query_states = query_states.contiguous()
+            key_states = key_states.contiguous()
+            value_states = value_states.contiguous()
+
+        # CLIP text model uses both `causal_attention_mask` and `attention_mask` sequentially.
+        attn_output = torch.nn.functional.scaled_dot_product_attention(
+            query_states,
+            key_states,
+            value_states,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout if self.training else 0.0,
+            scale=self.scale,
+        )
+
+        attn_output = attn_output.transpose(1, 2)
+        attn_output = attn_output.reshape(bsz, tgt_len, embed_dim)
+
+        attn_output = self.out_proj(attn_output)
+
+        return attn_output, None
+
+
+CLIP_ATTENTION_CLASSES = {
+    "eager": CLIPAttention,
+    "sdpa": CLIPSdpaAttention,
+    "flash_attention_2": CLIPFlashAttention2,
+}
+
+
+class CLIPMLP(nn.Module):
+    def __init__(self, config):
         super().__init__()
-        self.image_size = img_size
-        # self.num_classes = num_classes
-        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.config = config
+        self.activation_fn = ACT2FN[config.hidden_act]
+        self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 
-        self.patch_embed = PatchEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
-        num_patches = self.patch_embed.num_patches
-
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        if use_abs_pos_emb:
-            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
-        else:
-            self.pos_embed = None
-        self.pos_drop = nn.Dropout(p=drop_rate)
-
-        self.rel_pos_bias = None
-        self.rope = None
-
-        self.naiveswiglu = naiveswiglu
-
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-        self.use_rel_pos_bias = use_rel_pos_bias
-        self.blocks = nn.ModuleList([
-            Block(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-                init_values=init_values, window_size=self.patch_embed.patch_shape if use_rel_pos_bias else None,
-                xattn=xattn, rope=self.rope, postnorm=postnorm, subln=subln, naiveswiglu=naiveswiglu)
-            for i in range(depth)])
-
-        # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
-        self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
-
-        self.grad_checkpointing = grad_checkpointing
-        self.reference_embedding = reference_embedding
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.fc1(hidden_states)
+        hidden_states = self.activation_fn(hidden_states)
+        hidden_states = self.fc2(hidden_states)
+        return hidden_states
 
 
-    def get_num_layers(self):
-        return len(self.blocks)
-    
-    def lock(self, unlocked_groups=0, freeze_bn_stats=False):
-        assert unlocked_groups == 0, 'partial locking not currently supported for this model'
-        for param in self.parameters():
-            param.requires_grad = False
+class CLIPEncoderLayer(nn.Module):
+    def __init__(self, config: CLIPConfig):
+        super().__init__()
+        self.embed_dim = config.hidden_size
+        self.self_attn = CLIP_ATTENTION_CLASSES[config._attn_implementation](config)
+        self.layer_norm1 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
+        self.mlp = CLIPMLP(config)
+        self.layer_norm2 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
 
-    @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
-        self.grad_checkpointing = enable
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        causal_attention_mask: torch.Tensor,
+        output_attentions: Optional[bool] = False,
+    ) -> Tuple[torch.FloatTensor]:
+        """
+        Args:
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
+            attention_mask (`torch.FloatTensor`): attention mask of size
+                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
+                `(config.encoder_attention_heads,)`.
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+        """
+        residual = hidden_states
 
-    @torch.jit.ignore
-    def no_weight_decay(self):
-        return {'pos_embed', 'cls_token'}
+        hidden_states = self.layer_norm1(hidden_states)
+        hidden_states, attn_weights = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            causal_attention_mask=causal_attention_mask,
+            output_attentions=output_attentions,
+        )
+        hidden_states = residual + hidden_states
+
+        residual = hidden_states
+        hidden_states = self.layer_norm2(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+        outputs = (hidden_states,)
+
+        if output_attentions:
+            outputs += (attn_weights,)
+
+        return outputs
 
 
-    def forward_features(self, x):
-        x = self.patch_embed(x)
-        batch_size, seq_len, _ = x.size()
+class CLIPPreTrainedModel(PreTrainedModel):
+    """
+    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
+    models.
+    """
 
-        cls_tokens = self.cls_token.expand(batch_size, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
-        x = torch.cat((cls_tokens, x), dim=1)
-        if self.pos_embed is not None:
-            x = x + self.pos_embed
-        x = self.pos_drop(x)
+    config_class = CLIPConfig
+    base_model_prefix = "clip"
+    supports_gradient_checkpointing = True
+    _supports_sdpa = True
+    _supports_flash_attn_2 = True
 
-        # a patch_dropout of 0. would mean it is disabled and this function would do nothing but return what was passed in
-        if os.getenv('RoPE') == '1':
-            if self.training and not isinstance(self.patch_dropout, nn.Identity):
-                x, patch_indices_keep = self.patch_dropout(x)
-                self.rope.forward = partial(self.rope.forward, patch_indices_keep=patch_indices_keep)
+    def _init_weights(self, module):
+        """Initialize the weights"""
+        factor = self.config.initializer_factor
+        if isinstance(module, CLIPTextEmbeddings):
+            module.token_embedding.weight.data.normal_(mean=0.0, std=factor * 0.02)
+            module.position_embedding.weight.data.normal_(mean=0.0, std=factor * 0.02)
+        elif isinstance(module, CLIPVisionEmbeddings):
+            factor = self.config.initializer_factor
+            nn.init.normal_(module.class_embedding, mean=0.0, std=module.embed_dim**-0.5 * factor)
+            nn.init.normal_(module.patch_embedding.weight, std=module.config.initializer_range * factor)
+            nn.init.normal_(module.position_embedding.weight, std=module.config.initializer_range * factor)
+        elif isinstance(module, CLIPAttention):
+            factor = self.config.initializer_factor
+            in_proj_std = (module.embed_dim**-0.5) * ((2 * module.config.num_hidden_layers) ** -0.5) * factor
+            out_proj_std = (module.embed_dim**-0.5) * factor
+            nn.init.normal_(module.q_proj.weight, std=in_proj_std)
+            nn.init.normal_(module.k_proj.weight, std=in_proj_std)
+            nn.init.normal_(module.v_proj.weight, std=in_proj_std)
+            nn.init.normal_(module.out_proj.weight, std=out_proj_std)
+        elif isinstance(module, CLIPMLP):
+            factor = self.config.initializer_factor
+            in_proj_std = (module.config.hidden_size**-0.5) * ((2 * module.config.num_hidden_layers) ** -0.5) * factor
+            fc_std = (2 * module.config.hidden_size) ** -0.5 * factor
+            nn.init.normal_(module.fc1.weight, std=fc_std)
+            nn.init.normal_(module.fc2.weight, std=in_proj_std)
+        elif isinstance(module, CLIPModel):
+            nn.init.normal_(
+                module.text_projection.weight,
+                std=module.text_embed_dim**-0.5 * self.config.initializer_factor,
+            )
+            nn.init.normal_(
+                module.visual_projection.weight,
+                std=module.vision_embed_dim**-0.5 * self.config.initializer_factor,
+            )
+
+        if isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+
+
+CLIP_START_DOCSTRING = r"""
+    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
+    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
+    etc.)
+
+    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
+    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
+    and behavior.
+
+    Parameters:
+        config ([`CLIPConfig`]): Model configuration class with all the parameters of the model.
+            Initializing with a config file does not load the weights associated with the model, only the
+            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
+"""
+
+CLIP_TEXT_INPUTS_DOCSTRING = r"""
+    Args:
+        input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+            Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
+            it.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
+        attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+
+            - 1 for tokens that are **not masked**,
+            - 0 for tokens that are **masked**.
+
+            [What are attention masks?](../glossary#attention-mask)
+        position_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
+            config.max_position_embeddings - 1]`.
+
+            [What are position IDs?](../glossary#position-ids)
+        output_attentions (`bool`, *optional*):
+            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
+            tensors for more detail.
+        output_hidden_states (`bool`, *optional*):
+            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
+            more detail.
+        return_dict (`bool`, *optional*):
+            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+"""
+
+CLIP_VISION_INPUTS_DOCSTRING = r"""
+    Args:
+        pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
+            Pixel values. Padding will be ignored by default should you provide it. Pixel values can be obtained using
+            [`AutoImageProcessor`]. See [`CLIPImageProcessor.__call__`] for details.
+        output_attentions (`bool`, *optional*):
+            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
+            tensors for more detail.
+        output_hidden_states (`bool`, *optional*):
+            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
+            more detail.
+        interpolate_pos_encoding (`bool`, *optional*, defaults `False`):
+            Whether to interpolate the pre-trained position encodings.
+        return_dict (`bool`, *optional*):
+            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+"""
+
+CLIP_INPUTS_DOCSTRING = r"""
+    Args:
+        input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+            Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
+            it.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
+        attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+
+            - 1 for tokens that are **not masked**,
+            - 0 for tokens that are **masked**.
+
+            [What are attention masks?](../glossary#attention-mask)
+        position_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
+            config.max_position_embeddings - 1]`.
+
+            [What are position IDs?](../glossary#position-ids)
+        pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
+            Pixel values. Padding will be ignored by default should you provide it. Pixel values can be obtained using
+            [`AutoImageProcessor`]. See [`CLIPImageProcessor.__call__`] for details.
+        return_loss (`bool`, *optional*):
+            Whether or not to return the contrastive loss.
+        output_attentions (`bool`, *optional*):
+            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
+            tensors for more detail.
+        output_hidden_states (`bool`, *optional*):
+            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
+            more detail.
+        interpolate_pos_encoding (`bool`, *optional*, defaults `False`):
+            Whether to interpolate the pre-trained position encodings.
+        return_dict (`bool`, *optional*):
+            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+"""
+
+
+class CLIPEncoder(nn.Module):
+    """
+    Transformer encoder consisting of `config.num_hidden_layers` self attention layers. Each layer is a
+    [`CLIPEncoderLayer`].
+
+    Args:
+        config: CLIPConfig
+    """
+
+    def __init__(self, config: CLIPConfig):
+        super().__init__()
+        self.config = config
+        self.layers = nn.ModuleList([CLIPEncoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.gradient_checkpointing = False
+
+    def forward(
+        self,
+        inputs_embeds,
+        attention_mask: Optional[torch.Tensor] = None,
+        causal_attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, BaseModelOutput]:
+        r"""
+        Args:
+            inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
+                Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation.
+                This is useful if you want more control over how to convert `input_ids` indices into associated vectors
+                than the model's internal embedding lookup matrix.
+            attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+
+                - 1 for tokens that are **not masked**,
+                - 0 for tokens that are **masked**.
+
+                [What are attention masks?](../glossary#attention-mask)
+            causal_attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Causal mask for the text model. Mask values selected in `[0, 1]`:
+
+                - 1 for tokens that are **not masked**,
+                - 0 for tokens that are **masked**.
+
+                [What are attention masks?](../glossary#attention-mask)
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+            output_hidden_states (`bool`, *optional*):
+                Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
+                for more detail.
+            return_dict (`bool`, *optional*):
+                Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+        """
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        encoder_states = () if output_hidden_states else None
+        all_attentions = () if output_attentions else None
+
+        hidden_states = inputs_embeds
+        for idx, encoder_layer in enumerate(self.layers):
+            if output_hidden_states:
+                encoder_states = encoder_states + (hidden_states,)
+            if self.gradient_checkpointing and self.training:
+                layer_outputs = self._gradient_checkpointing_func(
+                    encoder_layer.__call__,
+                    hidden_states,
+                    attention_mask,
+                    causal_attention_mask,
+                    output_attentions,
+                )
             else:
-                self.rope.forward = partial(self.rope.forward, patch_indices_keep=None)
-                x = self.patch_dropout(x)
-        else:
-            x = self.patch_dropout(x)
+                layer_outputs = encoder_layer(
+                    hidden_states,
+                    attention_mask,
+                    causal_attention_mask,
+                    output_attentions=output_attentions,
+                )
 
-        rel_pos_bias = None
+            hidden_states = layer_outputs[0]
 
-        for blk in self.blocks:
-            if self.grad_checkpointing:
-                x = checkpoint(blk, x, (rel_pos_bias,))
-            else:
-                x = blk(x, rel_pos_bias=rel_pos_bias)
+            if output_attentions:
+                all_attentions = all_attentions + (layer_outputs[1],)
 
-        return x
+        if output_hidden_states:
+            encoder_states = encoder_states + (hidden_states,)
 
-    def forward(self, x):
+        if not return_dict:
+            return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
+        return BaseModelOutput(
+            last_hidden_state=hidden_states, hidden_states=encoder_states, attentions=all_attentions
+        )
+
+class CLIPVisionTransformer(nn.Module):
+    def __init__(self, config: CLIPVisionConfig):
+        super().__init__()
+        self.config = config
+        embed_dim = config.hidden_size
+
+        self.embeddings = CLIPVisionEmbeddings(config)
+        self.pre_layrnorm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
+        self.encoder = CLIPEncoder(config)
+        self.post_layernorm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
+
+    @add_start_docstrings_to_model_forward(CLIP_VISION_INPUTS_DOCSTRING)
+    @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=CLIPVisionConfig)
+    def forward(
+        self,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        interpolate_pos_encoding: Optional[bool] = False,
+    ) -> Union[Tuple, BaseModelOutputWithPooling]:
+        r"""
+        Returns:
 
         """
-        :return:
-            forward_features function returns raw features of ViT,
-            forward with return_all_features returns normalized features of ViT
-        :param x:
-        :param return_all_features:
-        """
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        features = self.forward_features(x)  # [B, n_patch, C]
+        if pixel_values is None:
+            raise ValueError("You have to specify pixel_values")
 
-        return features
+        hidden_states = self.embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
+        hidden_states = self.pre_layrnorm(hidden_states)
+
+        encoder_outputs = self.encoder(
+            inputs_embeds=hidden_states,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        last_hidden_state = encoder_outputs[0]
+        pooled_output = last_hidden_state[:, 0, :]
+        pooled_output = self.post_layernorm(pooled_output)
+
+        if not return_dict:
+            return (last_hidden_state, pooled_output) + encoder_outputs[1:]
+
+        return BaseModelOutputWithPooling(
+            last_hidden_state=last_hidden_state,
+            pooler_output=pooled_output,
+            hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,
+        )
+
+
+@add_start_docstrings(
+    """The vision model from CLIP without any head or projection on top.""",
+    CLIP_START_DOCSTRING,
+)
+class CLIPVisionModel(CLIPPreTrainedModel):
+    config_class = CLIPVisionConfig
+    main_input_name = "pixel_values"
+    _no_split_modules = ["CLIPEncoderLayer"]
+
+    def __init__(self, config: CLIPVisionConfig):
+        super().__init__(config)
+        self.vision_model = CLIPVisionTransformer(config)
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def get_input_embeddings(self) -> nn.Module:
+        return self.vision_model.embeddings.patch_embedding
+
+    @add_start_docstrings_to_model_forward(CLIP_VISION_INPUTS_DOCSTRING)
+    @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=CLIPVisionConfig)
+    def forward(
+        self,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        interpolate_pos_encoding: bool = False,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, BaseModelOutputWithPooling]:
+        r"""
+        Returns:
+
+        Examples:
+
+        ```python
+        >>> from PIL import Image
+        >>> import requests
+        >>> from transformers import AutoProcessor, CLIPVisionModel
+
+        >>> model = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
+        >>> processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+        >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+        >>> image = Image.open(requests.get(url, stream=True).raw)
+
+        >>> inputs = processor(images=image, return_tensors="pt")
+
+        >>> outputs = model(**inputs)
+        >>> last_hidden_state = outputs.last_hidden_state
+        >>> pooled_output = outputs.pooler_output  # pooled CLS states
+        ```"""
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        return self.vision_model(
+            pixel_values=pixel_values,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            interpolate_pos_encoding=interpolate_pos_encoding,
+        )
+
+
+@add_start_docstrings(CLIP_START_DOCSTRING)
+class CLIPModel(CLIPPreTrainedModel):
+    config_class = CLIPConfig
+    _no_split_modules = ["CLIPTextEmbeddings", "CLIPEncoderLayer", "CLIPVisionEmbeddings"]
+
+    def __init__(self, config: CLIPConfig):
+        super().__init__(config)
+
+        if not isinstance(config.text_config, CLIPTextConfig):
+            raise TypeError(
+                "config.text_config is expected to be of type CLIPTextConfig but is of type"
+                f" {type(config.text_config)}."
+            )
+
+        if not isinstance(config.vision_config, CLIPVisionConfig):
+            raise TypeError(
+                "config.vision_config is expected to be of type CLIPVisionConfig but is of type"
+                f" {type(config.vision_config)}."
+            )
+
+        text_config = config.text_config
+        vision_config = config.vision_config
+
+        self.projection_dim = config.projection_dim
+        self.text_embed_dim = text_config.hidden_size
+        self.vision_embed_dim = vision_config.hidden_size
+
+        vision_model = CLIPVisionModel._from_config(vision_config)
+        self.vision_model = vision_model.vision_model
+
+        self.visual_projection = nn.Linear(self.vision_embed_dim, self.projection_dim, bias=False)
+        self.text_projection = nn.Linear(self.text_embed_dim, self.projection_dim, bias=False)
+        self.logit_scale = nn.Parameter(torch.tensor(self.config.logit_scale_init_value))
+
+        # Initialize weights and apply final processing
+        self.post_init()
+        self.reference_embedding = None
+        self.cossim = nn.CosineSimilarity(dim=-1)
+        
+    @add_start_docstrings_to_model_forward(CLIP_VISION_INPUTS_DOCSTRING)
+    def get_image_features(
+        self,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        interpolate_pos_encoding: bool = False,
+        return_dict: Optional[bool] = None,
+    ) -> torch.FloatTensor:
+        r"""
+        Returns:
+            image_features (`torch.FloatTensor` of shape `(batch_size, output_dim`): The image embeddings obtained by
+            applying the projection layer to the pooled output of [`CLIPVisionModel`].
+
+        Examples:
+
+        ```python
+        >>> from PIL import Image
+        >>> import requests
+        >>> from transformers import AutoProcessor, CLIPModel
+
+        >>> model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+        >>> processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+        >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+        >>> image = Image.open(requests.get(url, stream=True).raw)
+
+        >>> inputs = processor(images=image, return_tensors="pt")
+
+        >>> image_features = model.get_image_features(**inputs)
+        ```"""
+        # Use CLIP model's config for some fields (if specified) instead of those of vision & text components.
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        vision_outputs = self.vision_model(
+            pixel_values=pixel_values,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            interpolate_pos_encoding=interpolate_pos_encoding,
+            return_dict=return_dict,
+        )
+
+        output = vision_outputs[0]
+        return output
     
     @torch.no_grad()
     def set_reference_embedding(self, x):
-        self.reference_embedding = self(x)[:, 0, :]
-    
-    @torch.no_grad()
-    def encode_image(self, x):
-        image_embeds = self(x)
+        self.reference_embedding = self.get_image_features(x)[:, 0, :]
         
-        # Rest of the processing
-        n_query = 64
+    def encode_image(self, x, n_patches=64):
+        image_embeds = self.get_image_features(x)
+        
         image_embeds = image_embeds[:, 1:, :]
         b, n, c = image_embeds.shape
         sqrt_n = int(n**0.5)
         image_embeds = image_embeds.permute(0, 2, 1).view(b, c, sqrt_n, sqrt_n)
-        stride = int(sqrt_n // (n_query ** 0.5))
+        stride = int(sqrt_n // (n_patches ** 0.5))
         image_embeds = F.avg_pool2d(image_embeds, kernel_size=(stride, stride), stride=stride)
         image_embeds = image_embeds.view(b, c, -1).permute(0, 2, 1).contiguous()
         
         return image_embeds
-
-    @torch.no_grad()
-    def encode_image_w_similarity(self, x):
-        image_embeds = self(x)
+    
+    def encode_image_w_similarity(self, x, n_patches=64):
+        image_embeds = self.get_image_features(x)
         
         # Calculate cosine similarity with reference embedding before processing
         original_embeds = image_embeds[:, 0, :]
         cos = nn.CosineSimilarity(dim=-1)
         similarity = cos(original_embeds, self.reference_embedding)
         
-        # Rest of the processing
-        n_query = 64
         image_embeds = image_embeds[:, 1:, :]
         b, n, c = image_embeds.shape
         sqrt_n = int(n**0.5)
         image_embeds = image_embeds.permute(0, 2, 1).view(b, c, sqrt_n, sqrt_n)
-        stride = int(sqrt_n // (n_query ** 0.5))
+        stride = int(sqrt_n // (n_patches ** 0.5))
         image_embeds = F.avg_pool2d(image_embeds, kernel_size=(stride, stride), stride=stride)
         image_embeds = image_embeds.view(b, c, -1).permute(0, 2, 1).contiguous()
         

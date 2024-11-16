@@ -218,7 +218,7 @@ class VLMConfig(LlamaConfig):
         adjust_embedding_len=None,
         special_token_map=None,
         flashattention=False,
-        encoded_image_dimention=1792,
+        encoded_image_dimention=1024,
         **kwargs,
     ):
         super().__init__(**kwargs)
