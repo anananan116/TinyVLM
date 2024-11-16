@@ -173,3 +173,4 @@ filtered/
 creditials.py
 results/
 *.safetensors
+.DS_Store
