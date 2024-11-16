@@ -48,14 +48,14 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from .configuration_llama import LlamaConfig, VLMConfig
+from .configuration_llama import BaseConfig, VLMConfig
 
 
 logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "meta-llama/Llama-2-7b-hf"
-_CONFIG_FOR_DOC = "LlamaConfig"
-
+_CONFIG_FOR_DOC = "VLMConfig"
+DEFAULT_SYSTEM_PROMPT = "You are a powerful visual assistant."
 
 class LlamaRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
@@ -89,7 +89,7 @@ class LlamaRotaryEmbedding(nn.Module):
         device=None,
         scaling_factor=1.0,
         rope_type="default",
-        config: Optional[LlamaConfig] = None,
+        config: Optional[BaseConfig] = None,
     ):
         super().__init__()
         # TODO (joao): remove the `if` below, only used for BC
@@ -275,7 +275,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: LlamaConfig, layer_idx: Optional[int] = None):
+    def __init__(self, config: BaseConfig, layer_idx: Optional[int] = None):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
@@ -624,7 +624,7 @@ LLAMA_ATTENTION_CLASSES = {
 
 
 class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig, layer_idx: int):
+    def __init__(self, config: BaseConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
 
@@ -713,7 +713,7 @@ LLAMA_START_DOCSTRING = r"""
     and behavior.
 
     Parameters:
-        config ([`LlamaConfig`]):
+        config ([`BaseConfig`]):
             Model configuration class with all the parameters of the model. Initializing with a config file does not
             load the weights associated with the model, only the configuration. Check out the
             [`~PreTrainedModel.from_pretrained`] method to load the model weights.
@@ -725,7 +725,7 @@ LLAMA_START_DOCSTRING = r"""
     LLAMA_START_DOCSTRING,
 )
 class LlamaPreTrainedModel(PreTrainedModel):
-    config_class = LlamaConfig
+    config_class = VLMConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["LlamaDecoderLayer"]
@@ -832,10 +832,10 @@ class LlamaModel(LlamaPreTrainedModel):
     Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`LlamaDecoderLayer`]
 
     Args:
-        config: LlamaConfig
+        config: BaseConfig
     """
 
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: BaseConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -1257,76 +1257,3 @@ class AdapterMLP(nn.Module):
             down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
         return down_proj
-
-class AtriVLM(LlamaForCausalLM):
-    def __init__(self, config: VLMConfig):
-        super().__init__(config)
-        if config.special_token_map:
-            self.image_start_token_id = config.special_token_map['Image'][1]
-            self.image_end_token_id = config.special_token_map['Image_End'][1]
-            self.caption_token_id = config.special_token_map['Caption'][1]
-            self.image_token_id = config.special_token_map['Image_Token'][1]
-        else:
-            raise ValueError("Special token map not found")
-        self.image_adapter = AdapterMLP(config)
-        
-    def forward(self, input_ids, encoded_image, labels, **kwargs):
-        """
-        Forward pass for the VLM model that combines image and text embeddings.
-        
-        Args:
-            input_ids (torch.LongTensor): Input token ids of shape (batch_size, seq_len)
-            encoded_image (torch.FloatTensor): Encoded image features of shape (batch_size, num_patches, hidden_dim)
-            labels (torch.LongTensor): Labels for computing the language modeling loss
-        """
-        encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
-        # Process image features through the adapter
-        processed_image = self.image_adapter(encoded_image)
-
-        # Get embeddings for all input tokens
-        token_embeddings = self.get_input_embeddings()(input_ids)
-        
-        # Find positions of image tokens and replace them with processed image embeddings
-        image_token_positions = (input_ids == self.image_token_id).nonzero(as_tuple=True)
-        token_embeddings = token_embeddings
-        token_embeddings[image_token_positions] = processed_image.reshape(-1, processed_image.size(-1))
-        
-        # Call the native forward method with the modified embeddings
-        outputs = self._native_forward(
-            inputs_embeds=token_embeddings,
-            labels=labels,
-            **kwargs
-        )
-        
-        return outputs
-    
-    def prepare_for_generation(self, input_ids, encoded_image, **kwargs):
-        """
-        Prepare KV cache for generation by processing the image and initial tokens.
-        
-        Args:
-            input_ids (torch.LongTensor): Input token ids of shape (batch_size, seq_len)
-            encoded_image (torch.FloatTensor): Encoded image features of shape (batch_size, num_patches, hidden_dim)
-            
-        Returns:
-            past_key_values: Tuple containing the key and value states to be used for subsequent generation
-        """
-        encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
-        # Process image features through the adapter
-        processed_image = self.image_adapter(encoded_image)
-        
-        # Get embeddings for all input tokens
-        token_embeddings = self.get_input_embeddings()(input_ids)
-        
-        # Find positions of image tokens and replace them with processed image embeddings
-        image_token_positions = (input_ids == self.image_token_id).nonzero(as_tuple=True)
-        token_embeddings[image_token_positions] = processed_image.reshape(-1, processed_image.size(-1))
-        
-        # Forward pass with cache preparation
-        outputs = self._native_forward(
-            inputs_embeds=token_embeddings,
-            use_cache=True,
-            **kwargs
-        )
-        
-        return outputs.past_key_values

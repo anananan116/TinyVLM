@@ -23,7 +23,7 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation
 
 
-class LlamaConfig(PretrainedConfig):
+class BaseConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of a [`LlamaModel`]. It is used to instantiate an LLaMA
     model according to the specified arguments, defining the model architecture. Instantiating a configuration with the
@@ -205,7 +205,7 @@ class LlamaConfig(PretrainedConfig):
             **kwargs,
         )
 
-class VLMConfig(LlamaConfig):
+class VLMConfig(BaseConfig):
     def __init__(
         self,
         lora=False,
@@ -219,6 +219,10 @@ class VLMConfig(LlamaConfig):
         special_token_map=None,
         flashattention=False,
         encoded_image_dimention=1024,
+        num_patches=64,
+        visual_config=None,
+        load_vision_model=False,
+        pretrained_vision_model="openai/clip-vit-large-patch14-336",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -236,3 +240,7 @@ class VLMConfig(LlamaConfig):
         if self.flashattention:
             self._attn_implementation = "flash_attention_2"
         self.encoded_image_dimention = encoded_image_dimention
+        self.num_patches = num_patches
+        self.visual_config = visual_config
+        self.load_vision_model = load_vision_model
+        self.pretrained_vision_model = pretrained_vision_model
