@@ -147,6 +147,35 @@ This approach allows us to categorize images using our custom-generated labels w
 6. Combine system prompt, user questions, and answers into one col and label them with corrsponding image_id
 7. Output the data as csv file
 
+### Encoding Images
+
+As we don't train the image encoder (we will mention this in detail later), we can see encoding the images as a preprocessing of the original images to make our real training more effcient. We implemented a robust and efficient image encoding pipeline to prepare our training data. The process consists of two key steps:
+
+#### Reference-based Filtering
+
+First, we address a common issue in large-scale web-scraped image datasets - the presence of "image not available" placeholders. A placeholder is usually a default image showing that the content is not available. Here's an example(we also use this image as the reference image):
+
+![image](reference.jpg)
+
+Our solution:
+
+- Uses a reference image that represents a typical "image not available" placeholder
+- Computes CLIP embeddings for this reference image
+- Calculates cosine similarity between each dataset image and the reference
+- Filters out images that exceed a similarity threshold of 0.3, effectively removing various forms of placeholder images
+
+#### Efficient Patch-based Encoding
+
+For the remaining valid images, we employ a modified CLIP vision encoder with optimized processing:
+
+- Processes images in batches through CLIP's ViT-L/14 architecture
+- Extracts and pools patch-level features to a fixed size (64) while preserving spatial information
+- Implements asynchronous disk writing and memory-efficient data handling
+- Features automatic checkpointing and detailed progress tracking
+- Enables efficient processing of large-scale datasets through parallel processing
+
+This process ensures that our training data is both clean (free of placeholder images) and represented in a rich, spatially-aware format suitable for vision-language tasks.
+
 ## Model Architecture
 
 Our model follows a vision-language architecture that combines a modified CLIP visual encoder with a Llama language model, connected through a specialized adaptation layer.
@@ -201,6 +230,8 @@ Here's a nice figure that shows our model architecture from the [Emu 2](https://
 
 ## Training
 
+In our training, we freeze the vision encoder and only train the adapter and the LLM with language modeling objective.
+
 ### Hyperparameters Pretraining
 
 | Hyperparameters | Pretraining |
@@ -228,3 +259,9 @@ Here's a nice figure that shows our model architecture from the [Emu 2](https://
 ## Results
 
 ### Pretraining Stage (Model 1)
+
+## Acknowledgement
+
+Most of the setups of this model are inspired by [Emu 2](https://arxiv.org/abs/2312.13286) and [Llava](https://arxiv.org/abs/2304.08485). But ALL code are original.
+
+We used open-sourced [Llama 3.2 1B](https://arxiv.org/abs/2407.21783) model from Meta and [CLIP](https://arxiv.org/abs/2103.00020) model from OpenAI.
