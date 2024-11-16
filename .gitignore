@@ -171,3 +171,5 @@ cache/
 encoded/
 filtered/
 creditials.py
+results/
+*.safetensors

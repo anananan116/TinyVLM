@@ -28,7 +28,7 @@ class VLMDataset(Dataset):
         file_path = os.path.join(self.encoded_images_file_path, data["identifier"]+".npy")
         image = np.load(file_path)
         caption = data["capsfusion"]
-        return image, caption
+        return image, caption, data["identifier"]
 
 class VLMCollator:
     def __init__(self, tokenizer: PreTrainedTokenizer, max_length: int, special_token_map: dict, num_patches: int):
@@ -59,8 +59,11 @@ class VLMCollator:
         return conversation[0]
     
     def __call__(self, batch):
-        images, captions = zip(*batch)
-        images = torch.tensor(np.array(images))
+        images, captions, identifiers = zip(*batch)
+        if isinstance(images[0], np.ndarray):
+            images = torch.tensor(np.array(images))
+        else:
+            images = torch.stack(images)
         
         # Process all examples in the batch
         all_input_ids = []
@@ -130,13 +133,16 @@ class VLMCollator:
         input_ids = torch.stack(padded_input_ids)
         labels = torch.stack(padded_labels)
         eval_encoded_prompts = torch.stack(padded_eval_prompts)
-
+        image_path = []
+        for identifier in identifiers:
+            image_path.append(os.path.join("images/", identifier+".jpg"))
         return {
             "encoded_image": images,
             "input_ids": input_ids,
             "labels": labels,
             "reference_captions": captions,
             "eval_input_ids": eval_encoded_prompts,
+            "image": image_path
         }
     
 class VLMData():
