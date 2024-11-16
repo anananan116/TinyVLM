@@ -4,28 +4,9 @@ from .configuration_clip import CLIPConfig
 from .visual_modeling import CLIPModel
 import torch
 from torch import nn
-from transformers import PreTrainedModel, PreTrainedTokenizer, AutoProcessor, GenerationMixin
+from transformers import AutoProcessor
 
-class VLMPretrainedModel(PreTrainedModel):
-    config_class = VLMConfig
-    base_model_prefix = "model"
-    supports_gradient_checkpointing = False
-    _no_split_modules = ["LlamaDecoderLayer", "Block"]
-    _skip_keys_device_placement = "past_key_values"
-
-    def _init_weights(self, module):
-        std = self.config.initializer_range
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-
-class AtriVLM(VLMPretrainedModel, GenerationMixin):
-    _tied_weights_keys = ['decoder.lm_head.weight']
+class AtriVLM(LlamaForCausalLM):
     def __init__(self, config: VLMConfig):
         super().__init__(config)
         if config.special_token_map:
@@ -42,7 +23,6 @@ class AtriVLM(VLMPretrainedModel, GenerationMixin):
         self.img_start_token = "<IMAGE>"
         self.img_end_token = "<IMAGE_END>"
         self.image_token = "<Image_Token>"
-        self.decoder = LlamaForCausalLM((config))
         if config.load_vision_model:
             if isinstance(config.visual_config, dict):
                 self.visual = CLIPModel(CLIPConfig(**config.visual_config))
@@ -50,18 +30,6 @@ class AtriVLM(VLMPretrainedModel, GenerationMixin):
                 self.visual = CLIPModel(config.visual_config)
         else:
             self.visual = None
-    
-    def get_input_embeddings(self):
-        return self.decoder.get_input_embeddings()
-    
-    def set_input_embeddings(self, value):
-        return self.decoder.set_input_embeddings(value)
-    
-    def get_output_embeddings(self):
-        return self.decoder.lm_head
-
-    def set_output_embeddings(self, new_embeddings):
-        self.decoder.lm_head = new_embeddings
     
     def forward(self, input_ids=None, encoded_image=None, labels=None, past_key_values = None, attention_mask = None, inputs_embeds = None, **kwargs):
         """
@@ -73,21 +41,21 @@ class AtriVLM(VLMPretrainedModel, GenerationMixin):
             labels (torch.LongTensor): Labels for computing the language modeling loss
         """
         if not past_key_values and (encoded_image is not None):
-            encoded_image = encoded_image.to(self.decoder.get_input_embeddings().weight.dtype)
+            encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
             # Process image features through the adapter
             processed_image = self.image_adapter(encoded_image)
 
             # Get embeddings for all input tokens
-            token_embeddings = self.decoder.get_input_embeddings()(input_ids)
+            token_embeddings = self.get_input_embeddings()(input_ids)
             
             # Find positions of image tokens and replace them with processed image embeddings
             image_token_positions = (input_ids == self.image_token_id).nonzero(as_tuple=True)
             token_embeddings = token_embeddings
             token_embeddings[image_token_positions] = processed_image.reshape(-1, processed_image.size(-1))
         else:
-            token_embeddings = self.decoder.get_input_embeddings()(input_ids)
+            token_embeddings = self.get_input_embeddings()(input_ids)
         # Call the native forward method with the modified embeddings
-        outputs = self.decoder._native_forward(
+        outputs = self._native_forward(
             inputs_embeds=token_embeddings,
             past_key_values=past_key_values,
             attention_mask=attention_mask,
@@ -176,19 +144,19 @@ class AtriVLM(VLMPretrainedModel, GenerationMixin):
         Returns:
             past_key_values: Tuple containing the key and value states to be used for subsequent generation
         """
-        encoded_image = encoded_image.to(self.decoder.get_input_embeddings().weight.dtype)
+        encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
         
         # Get embeddings for all input tokens
-        token_embeddings = self.decoder.get_input_embeddings()(input_ids)
+        token_embeddings = self.get_input_embeddings()(input_ids)
         
         # Find positions of image tokens and replace them with processed image embeddings
         image_token_positions = (input_ids == self.image_token_id).nonzero(as_tuple=True)
         token_embeddings[image_token_positions] = processed_image.reshape(-1, processed_image.size(-1))
         
         # Forward pass with cache preparation
-        outputs = self.decoder._native_forward(
+        outputs = self._native_forward(
             inputs_embeds=token_embeddings,
             use_cache=True,
             **kwargs
