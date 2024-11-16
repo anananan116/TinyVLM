@@ -27,12 +27,7 @@ def get_model_and_tokenizer(model_args, additional_tokens_dict, device="cuda", l
     config.special_token_map = special_token_map
     tokenizer.pad_token_id = tokenizer.eos_token_id
     tokenizer.pad_token = tokenizer.eos_token
-    if "llama" not in pretrained_model:
-        model = AtriVLM.from_pretrained(pretrained_model, config = config)
-    else:
-        model = AtriVLM(config)
-        decoder = LlamaForCausalLM.from_pretrained(config.pretrained_model, config = config, token = hugging_face_token)
-        model.decoder = decoder
+    model = AtriVLM.from_pretrained(pretrained_model, config = config)
     if config.load_vision_model:
         model.visual = CLIPModel.from_pretrained(config.pretrained_vision_model)
     
