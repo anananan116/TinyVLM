@@ -15,7 +15,7 @@ class CustomTrainingArgs(TrainingArguments):
         metadata={'help': 'Learning rate.'}
     )
     per_device_train_batch_size: int = field(
-        default=16,
+        default=8,
         metadata={'help': 'Train batch size.'}
     )
     per_device_eval_batch_size: int = field(
@@ -23,7 +23,7 @@ class CustomTrainingArgs(TrainingArguments):
         metadata={'help': 'Evaluation batch size.'}
     )
     gradient_accumulation_steps: int = field(
-        default=4,
+        default=8,
         metadata={'help': 'Gradient accumulation steps.'}
     )
     bf16: bool = field(
