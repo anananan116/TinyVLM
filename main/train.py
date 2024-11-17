@@ -17,6 +17,7 @@ from src import (
     ModelArguments,
     VLMTrainingArguments,
 )
+from .utils import TensorBoardCallback
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -61,8 +62,7 @@ def main():
     data = VLMData(training_args, tokenizer, special_token_map)
     train_dataset, eval_dataset = data.get_data()
     collate_fn = data.get_collator()
-    training_args.report_to = ["tensorboard"]
-    training_args.logging_dir = f"./logs"
+    tensorboard_callback = TensorBoardCallback(log_dir=training_args.logging_dir)
     trainer = VLMTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -70,6 +70,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=collate_fn,
+        callbacks=[tensorboard_callback],
     )
 
     trainer.train()
