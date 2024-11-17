@@ -61,7 +61,7 @@ def main():
     data = VLMData(training_args, tokenizer, special_token_map)
     train_dataset, eval_dataset = data.get_data()
     collate_fn = data.get_collator()
-    training_args.report_to = ["tensorboard", "json"]
+    training_args.report_to = ["tensorboard"]
     training_args.logging_dir = f"./logs"
     trainer = VLMTrainer(
         model=model,
