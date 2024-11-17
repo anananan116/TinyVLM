@@ -14,6 +14,10 @@ class CustomTrainingArgs(TrainingArguments):
         default=2e-5,
         metadata={'help': 'Learning rate.'}
     )
+    warmup_steps: int = field(
+        default=150,
+        metadata={'help': 'Warmup steps.'}
+    )
     per_device_train_batch_size: int = field(
         default=8,
         metadata={'help': 'Train batch size.'}
@@ -43,11 +47,11 @@ class CustomTrainingArgs(TrainingArguments):
         metadata={'help': 'Number of steps between evaluations.'}
     )
     logging_steps: int = field(
-        default=50,
+        default=20,
         metadata={'help': 'Number of steps between logs.'}
     )
     save_steps: int = field(
-        default=1000,
+        default=500,
         metadata={'help': 'Number of steps between saves.'}
     )
     save_total_limit: int = field(
