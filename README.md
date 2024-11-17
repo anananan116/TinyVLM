@@ -1,16 +1,44 @@
 # TinyVLM
 
-To try out our model:
+## Get Started
 
-Install dependencies:
+To install dependencies:
+
+If you have a Nvidia GPU with more than 4GB of free VRAM, please first install torch with cuda if you haven't:
 
 ```bash
-pip install transformers
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-NOTE that the model on hugging face is still a place holder!
+If you are using a apple device with an M-Chip, please simply install torch by:
 
-Perform inference (a minimum of 4G free vram is needed to perform inference):
+```bash
+pip install torch torchvision torchaudio
+```
+
+If you want to run the model on other backends supported by pytorch, please search for how to install torch with that backend and make neccessary changes to the code below.
+
+Note: Running on CPU is not recommended as it is very ineffcient.
+
+Then, install the transformers package and other dependencies:
+
+```bash
+pip install flask pillow transformers
+```
+
+### Web Interface
+
+Update: Web interface is available!
+
+Clone this repository and run
+
+```bash
+python run_server.py
+```
+
+And visit the localhost website to access the web inference interface.
+
+### Generation Script
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -38,7 +66,7 @@ with torch.no_grad():
         attention_mask=inputs['attention_mask'].to("cuda"), 
         encoded_image = inputs["encoded_image"], 
         max_new_tokens=128, 
-        do_sample=False
+        do_sample=True
     )
 
 output_text = tokenizer.batch_decode(outputs, skip_special_tokens=True)
