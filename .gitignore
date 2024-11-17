@@ -174,3 +174,4 @@ creditials.py
 results/
 *.safetensors
 .DS_Store
+*.json

@@ -28,7 +28,7 @@ tokenizer = AutoTokenizer.from_pretrained("anananan116/TinyVLM")
 # `<IMGPLH>` is the image placeholder which will be replaced by image embeddings. 
 # the number of `<IMGPLH>` should be equal to the number of input images
 
-prompt = "Here's an image: <IMGPLH>Create a caption for this image."
+prompt = "Here's an image:<IMGPLH>Describe this image."
 image = Image.open(requests.get('https://github.com/anananan116/TinyVLM/blob/main/test.png?raw=true',stream=True).raw)
 inputs = model.prepare_input_ids_for_generation([prompt], [image], tokenizer)
 
@@ -38,7 +38,7 @@ with torch.no_grad():
         attention_mask=inputs['attention_mask'].to("cuda"), 
         encoded_image = inputs["encoded_image"], 
         max_new_tokens=128, 
-        do_sample=True
+        do_sample=False
     )
 
 output_text = tokenizer.batch_decode(outputs, skip_special_tokens=True)

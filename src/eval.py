@@ -63,11 +63,8 @@ def generate_with_cache(
             probs[finished_sequences] = 0
             probs[finished_sequences, eos_id] = 1
             
-            # Sample next token
-            if current_length != 25:
-                next_token = torch.multinomial(probs, num_samples=1)
-            else:
-                next_token = torch.tensor([[50256], [50255]], device=probs.device)
+            next_token = torch.multinomial(probs, num_samples=1)
+
             
             # Mask tokens with EOS for finished sequences
             next_token = torch.where(finished_sequences.unsqueeze(1), 
@@ -132,11 +129,8 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
                 gen_tokens = word_tokenize(gen_cap.lower())
                 ref_tokens = word_tokenize(ref_cap.lower())
                 
-                # Exact Match
-                batch_metrics['exact_match'] += float(gen_cap.lower() == ref_cap.lower())
-                
                 # BLEU scores (1-3)
-                for n in range(1, 4):
+                for n in range(1, 5):
                     bleu_score = sentence_bleu(
                         [ref_tokens],
                         gen_tokens,
@@ -144,6 +138,13 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
                         smoothing_function=smoothing
                     )
                     batch_metrics[f'bleu_{n}'] += bleu_score
+            
+            # forward pass
+            batch_metrics['eval_loss'] = model(
+                batch['input_ids'].to(device), 
+                batch['encoded_image'].to(device), 
+                labels=eval_input_ids
+            ).loss.item() * num_samples
             
             # Average metrics for this batch
             batch_metrics = {k: v / num_samples for k, v in batch_metrics.items()}
