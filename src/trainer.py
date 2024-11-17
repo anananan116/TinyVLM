@@ -36,5 +36,7 @@ class VLMTrainer(Trainer):
         
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         self._memory_tracker.stop_and_update_metrics(metrics)
-
+        metrics_with_prefix = {}
+        for key, value in metrics.items():
+            metrics_with_prefix[f"{metric_key_prefix}_{key}"] = value
         return metrics

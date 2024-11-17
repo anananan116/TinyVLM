@@ -47,18 +47,16 @@ class TensorBoardCallback(TrainerCallback):
         
         for key, value in logs.items():
             if isinstance(value, (int, float)):
-                # Training metrics
-                if key == 'loss':
-                    self.writer.add_scalar(f'training/{key}', value, state.global_step)
-                # Evaluation metrics
-                elif key == 'grad_norm':
-                    self.writer.add_scalar(f'training/{key}', value, state.global_step)
-                # Learning rate
-                elif key == 'learning_rate':
-                    self.writer.add_scalar('training/learning_rate', value, state.global_step)
-                # Other metrics
-                else:
-                    self.writer.add_scalar(f'other/{key}', value, state.global_step)
+                if not key.startswith('eval_'):
+                    # Training metrics
+                    if key == 'loss':
+                        self.writer.add_scalar(f'training/{key}', value, state.global_step)
+                    elif key == 'grad_norm':
+                        self.writer.add_scalar(f'training/{key}', value, state.global_step)
+                    elif key == 'learning_rate':
+                        self.writer.add_scalar('training/learning_rate', value, state.global_step)
+                    else:
+                        self.writer.add_scalar(f'other/{key}', value, state.global_step)
 
     def on_evaluate(self, args, state, control, metrics: Dict[str, float] = None, **kwargs):
         """Log evaluation metrics.
