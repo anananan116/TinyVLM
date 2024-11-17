@@ -143,7 +143,7 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
             batch_metrics['eval_loss'] = model(
                 batch['input_ids'].to(device), 
                 batch['encoded_image'].to(device), 
-                labels=eval_input_ids
+                labels= batch['labels'].to(device)
             ).loss.item() * num_samples
             
             # Average metrics for this batch
