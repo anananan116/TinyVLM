@@ -313,6 +313,9 @@ Though we observe that the model clearly know what's in the image, however, some
 
 To resolve this problem, we will perform continue-training on instruction tunning data as mentioned in the Model at A Glance Section. In instruction-tunning, we will perform training on more carefully labeled image captioning dataset along with various visual-language tasks, e.g. visual question answering, object reconization, text reading. In this traning pahse, we train the model to have better complex reasoning about visual content and handling specific user instructions and queries with the above mentioned 4 datasets (7 tasks, collected from 29 original datasets).
 
+## Conclusion for the pre-training process  
+By utilizing CLIP's vision transformer and Llama architecture, we were able to get a pretty decent pre-trained model that can have high accuracy on recognizing common objects and actions. We were able to decrease the loss as the model trained, and BLEU Scores steadily increased as trained steps increased. Overall, the BLEU score and the model performance meet our initial expectation. In order to allow our model to recognize more complex and unusual objects and provide better descriptions on images, we will collect more VQA data from more ML resources, pre-process them, and then use them for the instruction tuning. By feeding more random and variety of images, we expect the model will have higher accuracy in general, be able to answer specific user's questions, and be better at predicting user's intent and expectations.
+
 
 
 ## Acknowledgement
