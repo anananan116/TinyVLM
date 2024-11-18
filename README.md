@@ -288,6 +288,22 @@ In our training, we freeze the vision encoder and only train the adapter and the
 
 ### Pretraining Stage (Model 1)
 
+#### Loss Plot
+
+![image](assets/loss.png)
+
+We notice a smooth training curve, which indicates a stable training. We also note that the model's performance on validation set matches its performance on the training set. As no regularization, e.g. dropout, is used, this is the expected behavior and there's no sign of overfit.
+
+#### Performance on Validation Set
+
+![image](assets/bleu.png)
+
+As our evaluation, we mainly assess our model on the BLEU score. BLEU score measures how good the model's output caption matches the ground truth caption. BLEU-n means BLEU score with n-gram. Note that though the BLEU score seems to be low in our setup, this could be caused by the extreme diveristy of the pre-training stage training captions rather than underfit of the model.
+
+#### Image Caption Samples
+
+
+
 ## Acknowledgement
 
 Most of the setups of this model are inspired by [Emu 2](https://arxiv.org/abs/2312.13286) and [Llava](https://arxiv.org/abs/2304.08485). But ALL code are original.
