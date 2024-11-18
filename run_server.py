@@ -14,13 +14,15 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.float16,
 ).eval()
 if torch.cuda.is_available():
-    model = model.to("cuda")
+    device = torch.device("cuda")
 elif torch.backends.mps.is_available():
-    model = model.to("mps")
+    device = torch.device("mps")
 else:
-    model = model.to("cpu")
+    device = torch.device("cpu")
+model.to(device)
 tokenizer = AutoTokenizer.from_pretrained("anananan116/TinyVLM")
-
+tokenizer.pad_token = tokenizer.eos_token
+tokenizer.pad_token_id = tokenizer.eos_token_id
 DEFAULT_PROMPT = "Here's an image:<IMGPLH>Describe this image."
 
 HTML_TEMPLATE = '''
@@ -448,8 +450,8 @@ def process():
         
         with torch.no_grad():
             generated_ids = model.generate(
-                input_ids=inputs['input_ids'].to("cuda"),
-                attention_mask=inputs['attention_mask'].to("cuda"),
+                input_ids=inputs['input_ids'].to(device),
+                attention_mask=inputs['attention_mask'].to(device),
                 encoded_image=inputs["encoded_image"],
                 max_new_tokens=128,
                 do_sample=True,

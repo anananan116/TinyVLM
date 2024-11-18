@@ -115,9 +115,12 @@ Our model combines a Llama 3.2 1B language model with a CLIP ViT-L (~400M parame
     - All initial images are not uniform in any regard, however during preprocessing, all images will be cropped
     - The dataset is cosist of a synthized caption and an url to the image.
 - Instruction Tunning Data
-  - [Instruction Tuning #1(VQA) - textVQA](https://textvqa.org/dataset/)
-  - [Instruction Tuning #2(VQA) - VQA](https://visualqa.org/download.html)
-  - [Instruction Tuning #3(Captioning) - Filtered CC-3M](https://github.com/haotian-liu/LLaVA/blob/main/docs/Data.md)
+  - [M3IT (Comprehensive visual instruction tunning dataset)](https://huggingface.co/datasets/MMInstruction/M3IT)
+  - [LlavaR (Visual interaction data created by GPT-4)](https://llavar.github.io/#data)
+
+  - [LaVA Visual Instruct 150K (Visual interaction data created by GPT-4)](https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K?row=0)
+
+  - [Alpaca (Text only instruction tunning dataset, to restore text-only performance)](https://github.com/tatsu-lab/stanford_alpaca?tab=readme-ov-file#data-release)
     - These datasets provide conversation data on diverse tasks. Format varies.
 
 ### Pretraining Data
@@ -308,6 +311,17 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 
 
 #### Image Caption Samples
+This could be reproduced by runing generate.ipynb notebook.
+
+![image](assets/output.png)
+
+#### What's Next
+Though we observe that the model clearly know what's in the image, however, some captions that the models give is confusing. It seems like it is sometimes writing a introduction to an item in a online shop, and sometimes it seems to give wired output that describe something related to the image. This behavior is actually expected when training our model with pretraining data since a lot of them are crawled and poorly labeled. Plus, the model right now only perform image captioning whatever prompt we give. 
+
+To resolve this problem, we will perform continue-training on instruction tunning data as mentioned in the Model at A Glance Section. In instruction-tunning, we will perform training on more carefully labeled image captioning dataset along with various visual-language tasks, e.g. visual question answering, object reconization, text reading. In this traning pahse, we train the model to have better complex reasoning about visual content and handling specific user instructions and queries with the above mentioned 4 datasets (7 tasks, collected from 29 original datasets).
+
+## Conclusion for the pre-training process  
+By utilizing CLIP's vision transformer and Llama architecture, we were able to get a pretty decent pre-trained model that can have high accuracy on recognizing common objects and actions. We were able to decrease the loss as the model trained, and BLEU Scores steadily increased as trained steps increased. Overall, the BLEU score and the model performance meet our initial expectation. In order to allow our model to recognize more complex and unusual objects and provide better descriptions on images, we will collect more VQA data from more ML resources, pre-process them, and then use them for the instruction tuning. By feeding more random and variety of images, we expect the model will have higher accuracy in general, be able to answer specific user's questions, and be better at predicting user's intent and expectations.
 
 
 
