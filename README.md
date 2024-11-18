@@ -300,7 +300,15 @@ We notice a smooth training curve, which indicates a stable training. We also no
 
 As our evaluation, we mainly assess our model on the BLEU score. BLEU score measures how good the model's output caption matches the ground truth caption. BLEU-n means BLEU score with n-gram. Note that though the BLEU score seems to be low in our setup, this could be caused by the extreme diveristy of the pre-training stage training captions rather than underfit of the model.
 
+#### Next model:
+So far, we finished the pre-training for our model, and we will start to do instruction tuning (fine-tuning). Since the pre-trained model is limited to recognize common objects and actions, when we give a vague or confusing image (artworks), the accuracy of the model prediction will drop dramatically. As a result, the fine-tuning is necessary for better handling those scenarios, and we will follow the steps we mentioned earlier and provide more details as we move on.
+
+## Conclusion for the pre-training process  
+By utilizing CLIP's vision transformer and Llama architecture, we were able to get a pretty decent pre-trained model that can have high accuracy on recognizing common objects and actions. We were able to decrease the loss as the model trained, and BLEU Scores steadily increased as trained steps increased. Overall, the BLEU score and the model performance meet our initial expectation. In order to allow our model to recognize more complex and unusual objects or patterns, we will collect more VQA data from more ML resources, pre-process them, and then use them for the instruction tuning. By feeding more random and variety of images, we expect the model will have higher accuracy in general, be able to answer specific user's questions, and be better at predicting user's intent and expectations.
+
+
 #### Image Caption Samples
+
 
 
 
