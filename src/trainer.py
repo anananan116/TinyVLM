@@ -19,8 +19,8 @@ class VLMTrainer(Trainer):
         """
         input_ids = inputs["input_ids"]
         labels = inputs["labels"]
-        encoded_images = inputs["encoded_image"]
-        outputs = model(input_ids=input_ids, labels=labels, encoded_image=encoded_images)
+        images = inputs["images"]
+        outputs = model(input_ids=input_ids, labels=labels, images=images)
         loss = outputs.loss
         return (loss, outputs) if return_outputs else loss
     

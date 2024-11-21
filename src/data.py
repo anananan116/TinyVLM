@@ -7,6 +7,7 @@ from transformers import PreTrainedTokenizer
 from torch.utils.data import Dataset
 from torch.distributed import get_rank
 from tqdm import tqdm
+from PIL import Image
 from .prompts import CAPTION_PROMPTS
 np.random.seed(42)
 
@@ -25,13 +26,13 @@ class VLMDataset(Dataset):
     
     def __getitem__(self, idx):
         data = self.data.iloc[idx]
-        file_path = os.path.join(self.encoded_images_file_path, data["identifier"]+".npy")
-        image = np.load(file_path)
+        file_path = os.path.join(self.encoded_images_file_path, data["identifier"]+".jpg")
+        image = Image.open(file_path)
         caption = data["capsfusion"]
         return image, caption, data["identifier"]
 
 class VLMCollator:
-    def __init__(self, tokenizer: PreTrainedTokenizer, max_length: int, special_token_map: dict, num_patches: int):
+    def __init__(self, processor, tokenizer: PreTrainedTokenizer, max_length: int, special_token_map: dict, num_patches: int):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.special_token_map = special_token_map
@@ -46,6 +47,7 @@ class VLMCollator:
         self.image_placeholders = "".join([self.image_token] * self.num_patches)
         self.user_prompt = f"Here's an image: {self.image_start_token}{self.image_placeholders}{self.image_end_token}"
         self.special_ids_series = torch.tensor([128006, 78191, 128007], dtype=torch.long)
+        self.prosessor = processor
 
     def apply_chat_format(self, caption):
         user_prompt = self.user_prompt + get_random_prompt()
@@ -60,10 +62,7 @@ class VLMCollator:
     
     def __call__(self, batch):
         images, captions, identifiers = zip(*batch)
-        if isinstance(images[0], np.ndarray):
-            images = torch.tensor(np.array(images))
-        else:
-            images = torch.stack(images)
+        pixel_values = self.processor(images, return_tensors="pt")["pixel_values"]
         
         # Process all examples in the batch
         all_input_ids = []
@@ -137,7 +136,7 @@ class VLMCollator:
         for identifier in identifiers:
             image_path.append(os.path.join("images/", identifier+".jpg"))
         return {
-            "encoded_image": images,
+            "images": pixel_values,
             "input_ids": input_ids,
             "labels": labels,
             "reference_captions": captions,
