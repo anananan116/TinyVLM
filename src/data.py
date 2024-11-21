@@ -145,7 +145,7 @@ class VLMCollator:
         }
     
 class VLMData():
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, special_token_map: dict):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, special_token_map: dict, prosessor):
         self.data_path = args.data_path
         self.encoded_images_file_path = args.encoded_images_file_path
         self.tokenizer = tokenizer
@@ -179,7 +179,7 @@ class VLMData():
             print(f"Validation data size: {len(self.validation_data)}")
         self.training_dataset = VLMDataset(self.training_data, self.encoded_images_file_path)
         self.validation_dataset = VLMDataset(self.validation_data, self.encoded_images_file_path)
-        self.collator = VLMCollator(tokenizer, self.max_length, special_token_map, self.num_patches)
+        self.collator = VLMCollator(tokenizer, self.max_length, special_token_map, self.num_patches, processor=prosessor)
     
     def get_data(self):
         return self.training_dataset, self.validation_dataset

@@ -3,7 +3,7 @@ from .modeling_VLM import AtriVLM
 from .configuration_llama import VLMConfig
 from .visual_modeling import CLIPModel
 from .configuration_clip import CLIPConfig
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoProcessor
 
 try:
     from .creditials import hugging_face_token
@@ -33,10 +33,10 @@ def get_model_and_tokenizer(model_args, additional_tokens_dict, device="cuda", l
     
     if config.adjust_embedding_len:
         model.resize_token_embeddings(config.adjust_embedding_len, mean_resizing=True)
-    
+    processor = AutoProcessor.from_pretrained(config.pretrained_vision_model).image_processor
     if config.lora:
         from peft import get_peft_model, LoraConfig, TaskType
         lora_config = LoraConfig(r=config.lora_rank, lora_alpha=config.lora_alpha, target_modules=config.lora_modules, task_type=config.task_type)
         model = get_peft_model(model, lora_config)
     
-    return model, tokenizer, special_token_map
+    return model, tokenizer, special_token_map, processor

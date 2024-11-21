@@ -53,13 +53,13 @@ def main():
     if is_main_process:
         logger.info(f"Additional tokens: {additional_tokens_dict}")
     
-    model, tokenizer, special_token_map = get_model_and_tokenizer(model_args, additional_tokens_dict)
+    model, tokenizer, special_token_map, prosessor = get_model_and_tokenizer(model_args, additional_tokens_dict)
     if is_main_process:
         logger.info(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_token_id = tokenizer.eos_token_id
 
-    data = VLMData(training_args, tokenizer, special_token_map)
+    data = VLMData(training_args, tokenizer, special_token_map, prosessor = prosessor)
     train_dataset, eval_dataset = data.get_data()
     collate_fn = data.get_collator()
     tensorboard_callback = TensorBoardCallback(log_dir=training_args.logging_dir)
