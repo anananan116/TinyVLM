@@ -47,7 +47,7 @@ class VLMCollator:
         self.image_placeholders = "".join([self.image_token] * self.num_patches)
         self.user_prompt = f"Here's an image: {self.image_start_token}{self.image_placeholders}{self.image_end_token}"
         self.special_ids_series = torch.tensor([128006, 78191, 128007], dtype=torch.long)
-        self.prosessor = processor
+        self.processor = processor
 
     def apply_chat_format(self, caption):
         user_prompt = self.user_prompt + get_random_prompt()
