@@ -179,7 +179,7 @@ class VLMData():
             print(f"Validation data size: {len(self.validation_data)}")
         self.training_dataset = VLMDataset(self.training_data, self.encoded_images_file_path)
         self.validation_dataset = VLMDataset(self.validation_data, self.encoded_images_file_path)
-        self.collator = VLMCollator(tokenizer, self.max_length, special_token_map, self.num_patches, processor=prosessor)
+        self.collator = VLMCollator(prosessor, tokenizer, self.max_length, special_token_map, self.num_patches)
     
     def get_data(self):
         return self.training_dataset, self.validation_dataset
