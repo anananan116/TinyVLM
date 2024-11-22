@@ -64,7 +64,7 @@ def main():
     model.visual.requires_grad_ = True
     model.image_adapter.requires_grad_ = True
     if is_main_process:
-        logger.info(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+        print(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     trainer = VLMTrainer(
         model=model,
         tokenizer=tokenizer,
