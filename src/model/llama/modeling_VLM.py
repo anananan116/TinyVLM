@@ -146,7 +146,6 @@ class AtriVLM(LlamaForCausalLM):
         Returns:
             past_key_values: Tuple containing the key and value states to be used for subsequent generation
         """
-        images = self.processor(images, return_tensors="pt")["pixel_values"].to(self.visual.vision_model.embeddings.patch_embedding.weight.device)
         encoded_image = self.visual(images)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
