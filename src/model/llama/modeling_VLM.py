@@ -146,7 +146,7 @@ class AtriVLM(LlamaForCausalLM):
         Returns:
             past_key_values: Tuple containing the key and value states to be used for subsequent generation
         """
-        encoded_image = self.visual(images)
+        encoded_image = self.visual.encode_image(images)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
         
