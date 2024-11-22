@@ -88,7 +88,7 @@ class VLMTrainingArguments:
     )
     
     data_path: str = field(
-        default='images/',
+        default='cache/',
         metadata={'help': 'Path to data files.'}
     )
     
@@ -98,7 +98,7 @@ class VLMTrainingArguments:
     )
     
     encoded_images_file_path: str = field(
-        default='cache/',
+        default='images/',
         metadata={'help': 'Path to encoded images'}
     )
     
