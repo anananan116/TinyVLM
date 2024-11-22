@@ -222,7 +222,7 @@ class VLMConfig(BaseConfig):
         num_patches=64,
         visual_config=None,
         load_vision_model=False,
-        pretrained_vision_model="google/siglip-so400m-patch14-384",
+        pretrained_vision_model="openai/clip-vit-large-patch14-336",
         **kwargs,
     ):
         super().__init__(**kwargs)
