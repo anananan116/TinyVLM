@@ -28,7 +28,7 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 console_handler.setFormatter(formatter)
 
 logger.addHandler(console_handler)
-# transformers.logging.set_verbosity_error()
+transformers.logging.set_verbosity_error()
 
 def main():
     parser = HfArgumentParser([CustomTrainingArgs, VLMTrainingArguments, ModelArguments])
@@ -68,6 +68,7 @@ def main():
         param.requires_grad = True
     if is_main_process:
         print(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    transformers.logging.set_verbosity_info()
     trainer = VLMTrainer(
         model=model,
         tokenizer=tokenizer,
