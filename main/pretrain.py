@@ -9,6 +9,7 @@ import torch
 from torch import distributed as dist
 
 from transformers import HfArgumentParser
+import transformers
 from src import (
     VLMData,
     VLMTrainer,
@@ -20,16 +21,14 @@ from src import (
 from .utils import TensorBoardCallback
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setLevel(logging.INFO)
 
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)
 
 logger.addHandler(console_handler)
-
+transformers.logging.set_verbosity_error()
 
 def main():
     parser = HfArgumentParser([CustomTrainingArgs, VLMTrainingArguments, ModelArguments])
