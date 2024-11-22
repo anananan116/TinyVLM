@@ -111,7 +111,7 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
             # Prepare KV cache
             past_key_values = model.prepare_for_generation(
                 eval_input_ids[:, :-1], 
-                batch['encoded_image'].to(device)
+                batch['images'].to(device)
             )
             
             # Generate captions

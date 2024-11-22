@@ -135,7 +135,7 @@ class AtriVLM(LlamaForCausalLM):
             "encoded_image": processed_images if processed_images.size(0) > 0 else None
         }
     
-    def prepare_for_generation(self, input_ids, encoded_image, **kwargs):
+    def prepare_for_generation(self, input_ids, images, **kwargs):
         """
         Prepare KV cache for generation by processing the image and initial tokens.
         
@@ -146,7 +146,8 @@ class AtriVLM(LlamaForCausalLM):
         Returns:
             past_key_values: Tuple containing the key and value states to be used for subsequent generation
         """
-        encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
+        images = self.processor(images, return_tensors="pt")["pixel_values"].to(self.visual.vision_model.embeddings.patch_embedding.weight.device)
+        encoded_image = self.visual(images)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
         
