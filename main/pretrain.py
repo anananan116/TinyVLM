@@ -28,7 +28,7 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 console_handler.setFormatter(formatter)
 
 logger.addHandler(console_handler)
-transformers.logging.set_verbosity_error()
+# transformers.logging.set_verbosity_error()
 
 def main():
     parser = HfArgumentParser([CustomTrainingArgs, VLMTrainingArguments, ModelArguments])
