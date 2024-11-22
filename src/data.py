@@ -160,13 +160,13 @@ class VLMData():
         if is_main_process:
             print(f"Loading {args.data_amount} partitions from {self.data_path}")
             for i in tqdm(range(self.num_data_partitions)):
-                data_partition = f"{self.data_path}/image_metadata_{i}_filtered.csv"
+                data_partition = f"{self.data_path}/image_metadata_{i}.csv"
                 one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
                 self.data.append(one_partition)
             print("Data loaded")
         else:
             for i in range(self.num_data_partitions):
-                data_partition = f"{self.data_path}/image_metadata_{i}_filtered.csv"
+                data_partition = f"{self.data_path}/image_metadata_{i}.csv"
                 one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
                 self.data.append(one_partition)
         self.data = pd.concat(self.data, axis=0, ignore_index=True)
