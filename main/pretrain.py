@@ -60,9 +60,12 @@ def main():
     train_dataset, eval_dataset = data.get_data()
     collate_fn = data.get_collator()
     tensorboard_callback = TensorBoardCallback(log_dir=training_args.logging_dir)
-    model.requires_grad_ = False
-    model.visual.requires_grad_ = True
-    model.image_adapter.requires_grad_ = True
+    for param in model.parameters():
+        param.requires_grad = False
+    for param in model.visual.parameters():
+        param.requires_grad = True
+    for param in model.image_adapter.parameters():
+        param.requires_grad = True
     if is_main_process:
         print(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     trainer = VLMTrainer(
