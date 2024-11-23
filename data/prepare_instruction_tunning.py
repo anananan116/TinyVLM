@@ -13,7 +13,7 @@ def process_image(args):
     """Process a single image with its counter value"""
     image_str, counter, output_dir = args
     try:
-        image = Image.open(BytesIO(b64decode(image_str[0])))
+        image = Image.open(BytesIO(b64decode(image_str[0]))).convert("RGB")
         image_path = f"{output_dir}/{counter}.jpg"
         image.save(image_path)
         return image_path
