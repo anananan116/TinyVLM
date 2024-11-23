@@ -17,10 +17,11 @@ class VLMTrainer(Trainer):
         """
         Compute the loss for the given inputs.
         """
-        input_ids = inputs["input_ids"]
+        input_ids = inputs["inputs"]["input_ids"]
+        attention_mask = inputs["inputs"]["attention_mask"]
         labels = inputs["labels"]
         images = inputs["images"]
-        outputs = model(input_ids=input_ids, labels=labels, images=images)
+        outputs = model(input_ids=input_ids, labels=labels, images=images, attention_mask=attention_mask)
         loss = outputs.loss
         return (loss, outputs) if return_outputs else loss
     

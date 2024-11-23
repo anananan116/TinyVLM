@@ -28,7 +28,7 @@ def get_model_and_tokenizer(model_args, additional_tokens_dict, device="cuda", l
     tokenizer.pad_token_id = tokenizer.eos_token_id
     tokenizer.pad_token = tokenizer.eos_token
     model = AtriVLM.from_pretrained(pretrained_model, config = config)
-    if config.load_vision_model:
+    if config.load_vision_model and model.visual is None:
         model.visual = CLIPModel.from_pretrained(config.pretrained_vision_model)
     
     if config.adjust_embedding_len:

@@ -15,7 +15,7 @@ from threading import Lock
 from tqdm import tqdm
 from torchvision.transforms import Resize, CenterCrop, InterpolationMode
 import glob
-
+from adapt_pretrain_data import adapt_data
 # Suppress PIL warnings about palette images
 warnings.filterwarnings('ignore', category=UserWarning, module='PIL.Image')
 
@@ -472,3 +472,6 @@ if __name__ == "__main__":
         print("Error: Unable to parse the input CSV file")
     except Exception as e:
         print(f"Error: {str(e)}")
+    
+    # Adapt the pretrain data
+    adapt_data("data/image_metadata_complete.csv", "data/pretrain_data.csv")

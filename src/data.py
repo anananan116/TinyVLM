@@ -8,28 +8,29 @@ from torch.utils.data import Dataset
 from torch.distributed import get_rank
 from tqdm import tqdm
 from PIL import Image
-from .prompts import CAPTION_PROMPTS
 np.random.seed(42)
 
-SYSTEM_PROMPT = "You are a powerful visual assistant."
-
-def get_random_prompt():
-    return random.choice(CAPTION_PROMPTS)
+SYSTEM_PROMPT = "You are a powerful visual assistant. "
 
 class VLMDataset(Dataset):
-    def __init__(self, data, encoded_images_file_path: str):
-        self.encoded_images_file_path = encoded_images_file_path
+    def __init__(self, data, image_file_path: str, image_placeholder: str = "<IMGPLH>"):
+        self.image_file_path = image_file_path
         self.data = data
+        self.image_placeholder = image_placeholder
     
     def __len__(self):
         return len(self.data)
     
     def __getitem__(self, idx):
         data = self.data.iloc[idx]
-        file_path = os.path.join(self.encoded_images_file_path, data["identifier"]+".jpg")
+        file_path = os.path.join(self.image_file_path, data["image_path"])
         image = Image.open(file_path)
-        caption = data["capsfusion"]
-        return image, caption, data["identifier"]
+        instruction = data["instruction"]
+        inputs = data["inputs"]
+        if self.image_placeholder not in inputs:
+            inputs = self.image_placeholder + inputs
+        outputs = data["outputs"]
+        return instruction, inputs, outputs, image
 
 class VLMCollator:
     def __init__(self, processor, tokenizer: PreTrainedTokenizer, max_length: int, special_token_map: dict, num_patches: int):
@@ -44,104 +45,40 @@ class VLMCollator:
         self.num_patches = num_patches
         self.eos_token_id = self.tokenizer.eos_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
-        self.image_placeholders = "".join([self.image_token] * self.num_patches)
-        self.user_prompt = f"Here's an image: {self.image_start_token}{self.image_placeholders}{self.image_end_token}"
-        self.special_ids_series = torch.tensor([128006, 78191, 128007], dtype=torch.long)
+        self.image_placeholders = f"{self.image_start_token}{"".join([self.image_token] * self.num_patches)}{self.image_end_token}"
         self.processor = processor
+        self.image_placeholder_token = "<IMGPLH>"
 
-    def apply_chat_format(self, caption):
-        user_prompt = self.user_prompt + get_random_prompt()
+    def apply_chat_format(self, instruction, inputs, outputs):
         
         conversation = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-            {"role": "assistant", "content": caption}
+            {"role": "system", "content": SYSTEM_PROMPT + instruction},
+            {"role": "user", "content": [input.replace(self.image_placeholder_token, self.image_placeholders) for input in inputs]},
+            {"role": "assistant", "content": outputs}
         ]
-        conversation = self.tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="pt")
-        return conversation[0]
+        conversation = self.tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="pt", return_assistant_tokens_mask=True)
+        eval_conversation = self.tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="pt", add_generation_prompt=True, padding="left")
+        return conversation, eval_conversation
+    
+    def create_labels(self, conversation):
+        labels = conversation["input_ids"].clone()
+        labels[labels == self.pad_token_id] = -100
+        labels[conversation["assistant_tokens_mask"] != 1] = -100
+        return labels
     
     def __call__(self, batch):
-        images, captions, identifiers = zip(*batch)
+        instruction, inputs, outputs, images = zip(*batch)
         pixel_values = self.processor(images, return_tensors="pt")["pixel_values"]
         
-        # Process all examples in the batch
-        all_input_ids = []
-        all_labels = []
-        all_eval_prompts = []
+        inputs, eval_inputs = self.apply_chat_format(instruction, inputs, outputs)
+        labels = self.create_labels(inputs)
         
-        for caption in captions:
-            # Get the full conversation input ids
-            input_ids = self.apply_chat_format(caption)
-            
-            # Find the position of special_ids_series in input_ids
-            for i in range(len(input_ids) - len(self.special_ids_series) + 1):
-                if torch.equal(input_ids[i:i + len(self.special_ids_series)], self.special_ids_series):
-                    split_idx = i + len(self.special_ids_series)
-                    break
-            else:
-                raise ValueError("Could not find special_ids_series in input_ids")
-            
-            # Create evaluation prompt (everything up to and including special_ids_series)
-            eval_prompt = input_ids[:split_idx].clone()
-            
-            # Create labels: -100 for everything before assistant's response
-            labels = torch.full_like(input_ids, -100)
-            labels[split_idx:] = input_ids[split_idx:]
-            
-            all_input_ids.append(input_ids)
-            all_labels.append(labels)
-            all_eval_prompts.append(eval_prompt)
-        
-        # Find max lengths for padding
-        max_input_length = min(max(len(ids) for ids in all_input_ids), self.max_length)
-        max_eval_length = min(max(len(ids) for ids in all_eval_prompts), self.max_length)
-        
-        # Pad all sequences
-        padded_input_ids = []
-        padded_labels = []
-        padded_eval_prompts = []
-        
-        for input_ids, labels, eval_prompt in zip(all_input_ids, all_labels, all_eval_prompts):
-            # Truncate if necessary and pad input_ids
-            input_ids = input_ids[:max_input_length]
-            padding_length = max_input_length - len(input_ids)
-            padded_input = torch.cat([
-                input_ids,
-                torch.full((padding_length,), self.pad_token_id, dtype=torch.long)
-            ])
-            padded_input_ids.append(padded_input)
-            
-            # Truncate if necessary and pad labels
-            labels = labels[:max_input_length]
-            padded_label = torch.cat([
-                labels,
-                torch.full((padding_length,), -100, dtype=torch.long)
-            ])
-            padded_labels.append(padded_label)
-            
-            # Truncate if necessary and pad eval prompts
-            eval_prompt = eval_prompt[:max_eval_length]
-            eval_padding_length = max_eval_length - len(eval_prompt)
-            padded_eval = torch.cat([
-                eval_prompt,
-                torch.full((eval_padding_length,), self.pad_token_id, dtype=torch.long)
-            ])
-            padded_eval_prompts.append(padded_eval)
-        
-        # Stack all tensors
-        input_ids = torch.stack(padded_input_ids)
-        labels = torch.stack(padded_labels)
-        eval_encoded_prompts = torch.stack(padded_eval_prompts)
-        image_path = []
-        for identifier in identifiers:
-            image_path.append(os.path.join("images/", identifier+".jpg"))
         return {
             "images": pixel_values,
-            "input_ids": input_ids,
+            "inputs": inputs,
             "labels": labels,
-            "reference_captions": captions,
-            "eval_input_ids": eval_encoded_prompts,
-            "image": image_path
+            "eval_inputs": eval_inputs,
+            "reference_answer": outputs
         }
     
 class VLMData():
