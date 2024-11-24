@@ -34,7 +34,8 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
                 attention_mask=inputs['attention_mask'].to(device), 
                 encoded_image = encoded_images, 
                 max_new_tokens=128, 
-                do_sample=False,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id
             )
             
             generated_captions = tokenizer.batch_decode(outputs, skip_special_tokens=True)
@@ -62,7 +63,7 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
             
             # forward pass
             batch_metrics['eval_loss'] = model(
-                batch['training_inputs']["input_ids"].to(device),
+                batch['inputs']["input_ids"].to(device),
                 batch['images'].to(device), 
                 labels= batch['labels'].to(device)
             ).loss.item() * num_samples

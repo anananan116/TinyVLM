@@ -33,7 +33,7 @@ class VLMTrainer(Trainer):
         
         dataloader = self.get_eval_dataloader()
         
-        metrics = evaluate_caption(self.model, dataloader, self.accelerator, self.tokenizer)
+        metrics = evaluate_caption(self.model, dataloader, self.accelerator, self.processing_class)
         
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         self._memory_tracker.stop_and_update_metrics(metrics)
