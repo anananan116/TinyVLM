@@ -72,6 +72,7 @@ class VLMCollator:
     def create_labels(self, conversation):
         labels = conversation["input_ids"].clone()
         labels[labels == self.pad_token_id] = -100
+        conversation["assistant_masks"] = torch.tensor(conversation["assistant_masks"], dtype=torch.long)
         labels[conversation["assistant_masks"] != 1] = -100
         return labels
     
@@ -79,12 +80,12 @@ class VLMCollator:
         instruction, inputs, outputs, images = zip(*batch)
         pixel_values = self.processor(images, return_tensors="pt")["pixel_values"]
         
-        inputs, eval_inputs = self.apply_chat_format(instruction, inputs, outputs)
-        labels = self.create_labels(inputs)
+        training_inputs, eval_inputs = self.apply_chat_format(instruction, inputs, outputs)
+        labels = self.create_labels(training_inputs)
         
         return {
             "images": pixel_values,
-            "inputs": inputs,
+            "inputs": training_inputs,
             "labels": labels,
             "eval_inputs": eval_inputs,
             "reference_answer": outputs
