@@ -16,10 +16,13 @@ def check_image(args):
     Returns:
         index if image is valid, None otherwise
     """
-    idx, image_path = args
-    if os.path.exists(image_path):
-        return idx
-    else:
+    try:
+        idx, image_path = args
+        if os.path.exists(image_path):
+            return idx
+        else:
+            return None
+    except:
         return None
 
 def process_dataframe(df_path, output_path, num_workers=None):

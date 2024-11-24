@@ -94,19 +94,7 @@ class VLMData():
             is_main_process = get_rank() == 0
         except:
             is_main_process = True
-        if is_main_process:
-            print(f"Loading {args.data_amount} partitions from {self.data_path}")
-            for i in tqdm(range(self.num_data_partitions)):
-                data_partition = f"{self.data_path}/image_metadata_{i}.csv"
-                one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
-                self.data.append(one_partition)
-            print("Data loaded")
-        else:
-            for i in range(self.num_data_partitions):
-                data_partition = f"{self.data_path}/image_metadata_{i}.csv"
-                one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
-                self.data.append(one_partition)
-        self.data = pd.concat(self.data, axis=0, ignore_index=True)
+        self.data = pd.read_csv(self.data_path)
         self.training_indices = np.random.choice(self.data.index, int(len(self.data) * (1 - args.validation_proportion)), replace=False)
         self.validation_indices = np.setdiff1d(self.data.index, self.training_indices)
         self.training_data = self.data.loc[self.training_indices]
