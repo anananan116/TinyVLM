@@ -17,11 +17,9 @@ def check_image(args):
         index if image is valid, None otherwise
     """
     idx, image_path = args
-    try:
-        img = Image.open(image_path)
-        img.close()
+    if os.path.exists(image_path):
         return idx
-    except Exception:
+    else:
         return None
 
 def process_dataframe(df_path, output_path, num_workers=None):
