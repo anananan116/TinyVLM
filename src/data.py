@@ -27,6 +27,12 @@ class VLMDataset(Dataset):
         image = Image.open(file_path)
         instruction = data["instruction"]
         inputs = data["inputs"]
+        if not isinstance(inputs, str):
+            inputs = ""
+        if not isinstance(instruction, str):
+            instruction = ""
+        if not isinstance(data["outputs"], str):
+            outputs = ""
         if self.image_placeholder not in inputs:
             inputs = self.image_placeholder + inputs
         outputs = data["outputs"]
@@ -51,20 +57,22 @@ class VLMCollator:
         self.image_placeholder_token = "<IMGPLH>"
 
     def apply_chat_format(self, instruction, inputs, outputs):
-        
-        conversation = [
-            {"role": "system", "content": SYSTEM_PROMPT + instruction},
-            {"role": "user", "content": [input.replace(self.image_placeholder_token, self.image_placeholders) for input in inputs]},
-            {"role": "assistant", "content": outputs}
-        ]
-        conversation = self.tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="pt", return_assistant_tokens_mask=True)
-        eval_conversation = self.tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="pt", add_generation_prompt=True, padding="left")
-        return conversation, eval_conversation
+        conversations = []
+        for one_instruction, one_input, one_output in zip(instruction, inputs, outputs):
+            conversation = [
+                {"role": "system", "content": SYSTEM_PROMPT + one_instruction},
+                {"role": "user", "content": [one_input.replace(self.image_placeholder_token, self.image_placeholders)]},
+                {"role": "assistant", "content": one_output}
+            ]
+            conversations.append(conversation)
+        tokenized_conversations = self.tokenizer.apply_chat_template(conversations, tokenize=True, return_tensors="pt", return_assistant_tokens_mask=True, return_dict=True, padding="longest", pading_side="right")
+        eval_conversation = self.tokenizer.apply_chat_template(conversations, tokenize=True, return_tensors="pt", add_generation_prompt=True, pading_side="left", padding="longest")
+        return tokenized_conversations, eval_conversation
     
     def create_labels(self, conversation):
         labels = conversation["input_ids"].clone()
         labels[labels == self.pad_token_id] = -100
-        labels[conversation["assistant_tokens_mask"] != 1] = -100
+        labels[conversation["assistant_masks"] != 1] = -100
         return labels
     
     def __call__(self, batch):
