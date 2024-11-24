@@ -8,6 +8,7 @@ import multiprocessing as mp
 from multiprocessing import Manager, Pool, Lock
 import numpy as np
 import os
+from adapt_it_data import process_dataframe
 
 def process_image(args):
     """Process a single image with its counter value"""
@@ -171,6 +172,7 @@ def main():
     final_df = pd.concat(result_dfs, ignore_index=True)
     final_df.to_csv("data/it_train.csv", index=False)
     print("\nProcessing completed!")
+    process_dataframe("data/it_train.csv", "data/it_train_processed.csv")
 
 if __name__ == "__main__":
     # Fix for Windows multiprocessing
