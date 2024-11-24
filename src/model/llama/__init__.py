@@ -142,7 +142,7 @@ def get_model_and_tokenizer(model_args, additional_tokens_dict, device="cuda", l
     config.pretrained_model = pretrained_model
     if load_vision_model:
         config.visual_config = CLIPConfig.from_pretrained(config.pretrained_vision_model)
-    tokenizer = AutoTokenizer.from_pretrained(config.pretrained_model, token = hugging_face_token, config = {"chat_template": modified_chat_template})
+    tokenizer = AutoTokenizer.from_pretrained(config.pretrained_model, token = hugging_face_token, chat_template= modified_chat_template)
     tokenizer.add_tokens([v for k,v in additional_tokens_dict.items()], special_tokens=True)
     special_token_map = {k: (v, tokenizer.convert_tokens_to_ids(v)) for k,v in additional_tokens_dict.items()}
     new_tokenizer_len = len(tokenizer)
