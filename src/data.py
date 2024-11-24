@@ -66,7 +66,9 @@ class VLMCollator:
             ]
             conversations.append(conversation)
         tokenized_conversations = self.tokenizer.apply_chat_template(conversations, tokenize=True, return_tensors="pt", return_assistant_tokens_mask=True, return_dict=True, padding="longest", pading_side="right")
-        eval_conversation = self.tokenizer.apply_chat_template(conversations, tokenize=True, return_tensors="pt", add_generation_prompt=True, pading_side="left", padding="longest")
+        eval_conversation = [x[:-1] for x in conversations]
+        eval_conversation = self.tokenizer.apply_chat_template(eval_conversation, tokenize=False, add_generation_prompt=True)
+        eval_conversation = self.tokenizer(eval_conversation, return_tensors="pt", padding="longest", padding_side="left")
         return tokenized_conversations, eval_conversation
     
     def create_labels(self, conversation):

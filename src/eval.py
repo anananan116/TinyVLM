@@ -39,7 +39,7 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
             
             generated_captions = tokenizer.batch_decode(outputs, skip_special_tokens=True)
             generated_captions = [text.split("assistant\n\n")[1] for text in generated_captions]
-            reference_captions = batch['reference_captions']  # Use raw reference captions directly
+            reference_captions = batch['reference_answer']  # Use raw reference captions directly
             
             # Calculate metrics for batch
             num_samples = len(generated_captions)
@@ -62,7 +62,7 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
             
             # forward pass
             batch_metrics['eval_loss'] = model(
-                batch['input_ids'].to(device), 
+                batch['training_inputs']["input_ids"].to(device),
                 batch['images'].to(device), 
                 labels= batch['labels'].to(device)
             ).loss.item() * num_samples
