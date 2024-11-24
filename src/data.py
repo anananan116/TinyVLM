@@ -45,7 +45,8 @@ class VLMCollator:
         self.num_patches = num_patches
         self.eos_token_id = self.tokenizer.eos_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
-        self.image_placeholders = f"{self.image_start_token}{"".join([self.image_token] * self.num_patches)}{self.image_end_token}"
+        self.image_tokens = "".join([self.image_token] * self.num_patches)
+        self.image_placeholders = f"{self.image_start_token}{self.image_tokens}{self.image_end_token}"
         self.processor = processor
         self.image_placeholder_token = "<IMGPLH>"
 
