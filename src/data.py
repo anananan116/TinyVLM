@@ -77,17 +77,13 @@ class VLMCollator:
         extended_masks = []
         assistant_masks = conversation["assistant_masks"]
         for mask in assistant_masks:
-            # Create a copy of the mask to modify
             extended_mask = mask[:]
-            # Iterate through the mask
             for i in range(len(mask) - 1):
-                # If the current token is 1 and the next token is 0, extend the mask
                 if mask[i] == 1 and mask[i + 1] == 0:
                     extended_mask[i + 1] = 1
-            # Append the modified mask to the extended_masks list
             extended_masks.append(extended_mask)
-        conversation["assistant_masks"] = torch.tensor(conversation["assistant_masks"], dtype=torch.long)
-        labels[conversation["assistant_masks"] != 1] = -100
+        extended_masks = torch.tensor(extended_masks, dtype=torch.long)
+        labels[extended_masks != 1] = -100
         return labels
     
     def __call__(self, batch):
