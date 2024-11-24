@@ -144,7 +144,7 @@ def main():
     # Configuration
     output_dir = "data/it_images"
     os.makedirs(output_dir, exist_ok=True)
-    num_processes = mp.cpu_count()  # Number of processes for image processing
+    num_processes = 16
     print(f"Number of processes: {num_processes}")
     
     dataset_list = [
