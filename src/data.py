@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from torch.distributed import get_rank
 from tqdm import tqdm
 from PIL import Image
+import copy
 np.random.seed(42)
 
 SYSTEM_PROMPT = "You are a powerful visual assistant. "
@@ -24,7 +25,7 @@ class VLMDataset(Dataset):
     def __getitem__(self, idx):
         data = self.data.iloc[idx]
         file_path = os.path.join(self.image_file_path, data["image_path"])
-        image = Image.open(file_path)
+        image = Image.open(file_path).convert("RGB")
         instruction = data["instruction"]
         inputs = data["inputs"]
         if not isinstance(inputs, str):
@@ -73,16 +74,19 @@ class VLMCollator:
     
     def create_labels(self, conversation):
         labels = conversation["input_ids"].clone()
-        labels[labels == self.pad_token_id] = -100
         extended_masks = []
         assistant_masks = conversation["assistant_masks"]
         for mask in assistant_masks:
-            extended_mask = mask[:]
+            extended_mask = copy.deepcopy(mask)
+            indices = []
             for i in range(len(mask) - 1):
                 if mask[i] == 1 and mask[i + 1] == 0:
-                    extended_mask[i + 1] = 1
+                    indices.append(i+1)
+            for index in indices:
+                extended_mask[index] = 1
             extended_masks.append(extended_mask)
         extended_masks = torch.tensor(extended_masks, dtype=torch.long)
+        conversation["assistant_masks"] = extended_masks
         labels[extended_masks != 1] = -100
         return labels
     
