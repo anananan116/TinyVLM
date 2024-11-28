@@ -52,10 +52,15 @@ def process_dataframe(df_path, output_path, num_workers=None):
     
     print("\nProcessing inputs...")
     for idx in tqdm(df.index, desc="Handling NaN values"):
-        if random.random() < 0.33:
+        if pd.isna(df.loc[idx, 'inputs']):
+            df.loc[idx, 'inputs'] = ""
+        if pd.isna(df.loc[idx, 'instruction']):
+            df.loc[idx, 'instruction'] = ""
+        random_val = random.random()
+        if random_val < 0.33:
             df.loc[idx, 'inputs'] = df.loc[idx, 'inputs'] + df.loc[idx, 'instruction']
             df.loc[idx, 'instruction'] = ''
-        elif random.random() < 0.66:
+        elif random_val < 0.66:
             df.loc[idx, 'inputs'] = df.loc[idx, 'instruction'] + df.loc[idx, 'inputs']
             df.loc[idx, 'instruction'] = ''
         else:
