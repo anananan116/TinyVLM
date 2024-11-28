@@ -5,6 +5,9 @@ import random
 from tqdm import tqdm
 import concurrent.futures
 import os
+from transformers import AutoProcessor
+
+test_processor = AutoProcessor.from_pretrained("openai/clip-vit-large-patch14-336")
 
 def check_image(args):
     """
@@ -19,6 +22,8 @@ def check_image(args):
     try:
         idx, image_path = args
         if os.path.exists(image_path):
+            image = Image.open(image_path).convert("RGB")
+            image = test_processor(image, return_tensors="pt")["pixel_values"]
             return idx
         else:
             return None
@@ -45,17 +50,16 @@ def process_dataframe(df_path, output_path, num_workers=None):
     df = pd.read_csv(df_path)
     total_rows = len(df)
     
-    # Process NaN inputs
-    print("\nProcessing NaN inputs...")
-    nan_indices = df[df['inputs'].isna()].index
-    for idx in tqdm(nan_indices, desc="Handling NaN values"):
-        if random.random() < 0.5:
-            # Move instruction to inputs and clear instruction
-            df.loc[idx, 'inputs'] = df.loc[idx, 'instruction']
+    print("\nProcessing inputs...")
+    for idx in tqdm(df.index, desc="Handling NaN values"):
+        if random.random() < 0.33:
+            df.loc[idx, 'inputs'] = df.loc[idx, 'inputs'] + df.loc[idx, 'instruction']
+            df.loc[idx, 'instruction'] = ''
+        elif random.random() < 0.66:
+            df.loc[idx, 'inputs'] = df.loc[idx, 'instruction'] + df.loc[idx, 'inputs']
             df.loc[idx, 'instruction'] = ''
         else:
-            # Just fill NaN with empty string
-            df.loc[idx, 'inputs'] = ''
+            pass
     
     # Prepare arguments for parallel processing
     check_args = list(zip(df.index, df['image_path']))
