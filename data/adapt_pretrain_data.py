@@ -1,3 +1,5 @@
+import pandas as pd
+import random
 CAPTION_PROMPTS = [
     "Describe this image.",
     "Write a caption for this image.",
@@ -20,3 +22,19 @@ CAPTION_PROMPTS = [
     "Generate text about this image.",
     "What appears in this image?"
 ]
+def get_random_prompt():
+    return random.choice(CAPTION_PROMPTS)
+
+INSTRUCTION = "Caption the image."
+
+def adapt_data(input_path, output_path):
+    df = pd.read_csv(input_path)
+    new_df = pd.DataFrame(columns=["instruction", "inputs", "outputs", "image_path"])
+    new_df["outputs"] = df["capsfusion"]
+    new_df["inputs"] = [get_random_prompt() for _ in range(len(df))]
+    new_df["instruction"] = [INSTRUCTION] * len(df)
+    new_df["image_path"] = "images/" + df["identifier"] + ".jpg"
+    new_df.to_csv(output_path, index=False)
+
+if __name__ == "__main__":
+    adapt_data("data/image_metadata_complete.csv", "data/pretrain_data.csv")

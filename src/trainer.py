@@ -17,10 +17,11 @@ class VLMTrainer(Trainer):
         """
         Compute the loss for the given inputs.
         """
-        input_ids = inputs["input_ids"]
+        input_ids = inputs["inputs"]["input_ids"]
+        attention_mask = inputs["inputs"]["attention_mask"]
         labels = inputs["labels"]
-        encoded_images = inputs["encoded_image"]
-        outputs = model(input_ids=input_ids, labels=labels, encoded_image=encoded_images)
+        images = inputs["images"]
+        outputs = model(input_ids=input_ids, labels=labels, images=images, attention_mask=attention_mask)
         loss = outputs.loss
         return (loss, outputs) if return_outputs else loss
     
@@ -32,7 +33,7 @@ class VLMTrainer(Trainer):
         
         dataloader = self.get_eval_dataloader()
         
-        metrics = evaluate_caption(self.model, dataloader, self.accelerator, self.tokenizer)
+        metrics = evaluate_caption(self.model, dataloader, self.accelerator, self.processing_class)
         
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         self._memory_tracker.stop_and_update_metrics(metrics)

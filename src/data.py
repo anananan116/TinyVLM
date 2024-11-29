@@ -7,31 +7,40 @@ from transformers import PreTrainedTokenizer
 from torch.utils.data import Dataset
 from torch.distributed import get_rank
 from tqdm import tqdm
-from .prompts import CAPTION_PROMPTS
+from PIL import Image
+import copy
 np.random.seed(42)
 
-SYSTEM_PROMPT = "You are a powerful visual assistant."
-
-def get_random_prompt():
-    return random.choice(CAPTION_PROMPTS)
+SYSTEM_PROMPT = "You are a powerful visual assistant. "
 
 class VLMDataset(Dataset):
-    def __init__(self, data, encoded_images_file_path: str):
-        self.encoded_images_file_path = encoded_images_file_path
+    def __init__(self, data, image_file_path: str, image_placeholder: str = "<IMGPLH>"):
+        self.image_file_path = image_file_path
         self.data = data
+        self.image_placeholder = image_placeholder
     
     def __len__(self):
         return len(self.data)
     
     def __getitem__(self, idx):
         data = self.data.iloc[idx]
-        file_path = os.path.join(self.encoded_images_file_path, data["identifier"]+".npy")
-        image = np.load(file_path)
-        caption = data["capsfusion"]
-        return image, caption, data["identifier"]
+        file_path = os.path.join(self.image_file_path, data["image_path"])
+        image = Image.open(file_path).convert("RGB")
+        instruction = data["instruction"]
+        inputs = data["inputs"]
+        if not isinstance(inputs, str):
+            inputs = ""
+        if not isinstance(instruction, str):
+            instruction = ""
+        if not isinstance(data["outputs"], str):
+            outputs = ""
+        if self.image_placeholder not in inputs:
+            inputs = self.image_placeholder + inputs
+        outputs = data["outputs"]
+        return instruction, inputs, outputs, image
 
 class VLMCollator:
-    def __init__(self, tokenizer: PreTrainedTokenizer, max_length: int, special_token_map: dict, num_patches: int):
+    def __init__(self, processor, tokenizer: PreTrainedTokenizer, max_length: int, special_token_map: dict, num_patches: int):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.special_token_map = special_token_map
@@ -43,110 +52,61 @@ class VLMCollator:
         self.num_patches = num_patches
         self.eos_token_id = self.tokenizer.eos_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
-        self.image_placeholders = "".join([self.image_token] * self.num_patches)
-        self.user_prompt = f"Here's an image: {self.image_start_token}{self.image_placeholders}{self.image_end_token}"
-        self.special_ids_series = torch.tensor([128006, 78191, 128007], dtype=torch.long)
+        self.image_tokens = "".join([self.image_token] * self.num_patches)
+        self.image_placeholders = f"{self.image_start_token}{self.image_tokens}{self.image_end_token}"
+        self.processor = processor
+        self.image_placeholder_token = "<IMGPLH>"
 
-    def apply_chat_format(self, caption):
-        user_prompt = self.user_prompt + get_random_prompt()
-        
-        conversation = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-            {"role": "assistant", "content": caption}
-        ]
-        conversation = self.tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="pt")
-        return conversation[0]
+    def apply_chat_format(self, instruction, inputs, outputs):
+        conversations = []
+        for one_instruction, one_input, one_output in zip(instruction, inputs, outputs):
+            conversation = [
+                {"role": "system", "content": SYSTEM_PROMPT + one_instruction},
+                {"role": "user", "content": [one_input.replace(self.image_placeholder_token, self.image_placeholders)]},
+                {"role": "assistant", "content": one_output}
+            ]
+            conversations.append(conversation)
+        tokenized_conversations = self.tokenizer.apply_chat_template(conversations, tokenize=True, return_tensors="pt", return_assistant_tokens_mask=True, return_dict=True, padding="longest", pading_side="right")
+        eval_conversation = [x[:-1] for x in conversations]
+        eval_conversation = self.tokenizer.apply_chat_template(eval_conversation, tokenize=False, add_generation_prompt=True)
+        eval_conversation = self.tokenizer(eval_conversation, return_tensors="pt", padding="longest", padding_side="left")
+        return tokenized_conversations, eval_conversation
+    
+    def create_labels(self, conversation):
+        labels = conversation["input_ids"].clone()
+        extended_masks = []
+        assistant_masks = conversation["assistant_masks"]
+        for mask in assistant_masks:
+            extended_mask = copy.deepcopy(mask)
+            indices = []
+            for i in range(len(mask) - 1):
+                if mask[i] == 1 and mask[i + 1] == 0:
+                    indices.append(i+1)
+            for index in indices:
+                extended_mask[index] = 1
+            extended_masks.append(extended_mask)
+        extended_masks = torch.tensor(extended_masks, dtype=torch.long)
+        conversation["assistant_masks"] = extended_masks
+        labels[extended_masks != 1] = -100
+        return labels
     
     def __call__(self, batch):
-        images, captions, identifiers = zip(*batch)
-        if isinstance(images[0], np.ndarray):
-            images = torch.tensor(np.array(images))
-        else:
-            images = torch.stack(images)
+        instruction, inputs, outputs, images = zip(*batch)
+        pixel_values = self.processor(images, return_tensors="pt")["pixel_values"]
         
-        # Process all examples in the batch
-        all_input_ids = []
-        all_labels = []
-        all_eval_prompts = []
+        training_inputs, eval_inputs = self.apply_chat_format(instruction, inputs, outputs)
+        labels = self.create_labels(training_inputs)
         
-        for caption in captions:
-            # Get the full conversation input ids
-            input_ids = self.apply_chat_format(caption)
-            
-            # Find the position of special_ids_series in input_ids
-            for i in range(len(input_ids) - len(self.special_ids_series) + 1):
-                if torch.equal(input_ids[i:i + len(self.special_ids_series)], self.special_ids_series):
-                    split_idx = i + len(self.special_ids_series)
-                    break
-            else:
-                raise ValueError("Could not find special_ids_series in input_ids")
-            
-            # Create evaluation prompt (everything up to and including special_ids_series)
-            eval_prompt = input_ids[:split_idx].clone()
-            
-            # Create labels: -100 for everything before assistant's response
-            labels = torch.full_like(input_ids, -100)
-            labels[split_idx:] = input_ids[split_idx:]
-            
-            all_input_ids.append(input_ids)
-            all_labels.append(labels)
-            all_eval_prompts.append(eval_prompt)
-        
-        # Find max lengths for padding
-        max_input_length = min(max(len(ids) for ids in all_input_ids), self.max_length)
-        max_eval_length = min(max(len(ids) for ids in all_eval_prompts), self.max_length)
-        
-        # Pad all sequences
-        padded_input_ids = []
-        padded_labels = []
-        padded_eval_prompts = []
-        
-        for input_ids, labels, eval_prompt in zip(all_input_ids, all_labels, all_eval_prompts):
-            # Truncate if necessary and pad input_ids
-            input_ids = input_ids[:max_input_length]
-            padding_length = max_input_length - len(input_ids)
-            padded_input = torch.cat([
-                input_ids,
-                torch.full((padding_length,), self.pad_token_id, dtype=torch.long)
-            ])
-            padded_input_ids.append(padded_input)
-            
-            # Truncate if necessary and pad labels
-            labels = labels[:max_input_length]
-            padded_label = torch.cat([
-                labels,
-                torch.full((padding_length,), -100, dtype=torch.long)
-            ])
-            padded_labels.append(padded_label)
-            
-            # Truncate if necessary and pad eval prompts
-            eval_prompt = eval_prompt[:max_eval_length]
-            eval_padding_length = max_eval_length - len(eval_prompt)
-            padded_eval = torch.cat([
-                eval_prompt,
-                torch.full((eval_padding_length,), self.pad_token_id, dtype=torch.long)
-            ])
-            padded_eval_prompts.append(padded_eval)
-        
-        # Stack all tensors
-        input_ids = torch.stack(padded_input_ids)
-        labels = torch.stack(padded_labels)
-        eval_encoded_prompts = torch.stack(padded_eval_prompts)
-        image_path = []
-        for identifier in identifiers:
-            image_path.append(os.path.join("images/", identifier+".jpg"))
         return {
-            "encoded_image": images,
-            "input_ids": input_ids,
+            "images": pixel_values,
+            "inputs": training_inputs,
             "labels": labels,
-            "reference_captions": captions,
-            "eval_input_ids": eval_encoded_prompts,
-            "image": image_path
+            "eval_inputs": eval_inputs,
+            "reference_answer": outputs
         }
     
 class VLMData():
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, special_token_map: dict):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, special_token_map: dict, prosessor):
         self.data_path = args.data_path
         self.encoded_images_file_path = args.encoded_images_file_path
         self.tokenizer = tokenizer
@@ -158,19 +118,7 @@ class VLMData():
             is_main_process = get_rank() == 0
         except:
             is_main_process = True
-        if is_main_process:
-            print(f"Loading {args.data_amount} partitions from {self.data_path}")
-            for i in tqdm(range(self.num_data_partitions)):
-                data_partition = f"{self.data_path}/image_metadata_{i}_filtered.csv"
-                one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
-                self.data.append(one_partition)
-            print("Data loaded")
-        else:
-            for i in range(self.num_data_partitions):
-                data_partition = f"{self.data_path}/image_metadata_{i}_filtered.csv"
-                one_partition = pd.read_csv(data_partition).loc[:, ["identifier", "capsfusion"]]
-                self.data.append(one_partition)
-        self.data = pd.concat(self.data, axis=0, ignore_index=True)
+        self.data = pd.read_csv(self.data_path)
         self.training_indices = np.random.choice(self.data.index, int(len(self.data) * (1 - args.validation_proportion)), replace=False)
         self.validation_indices = np.setdiff1d(self.data.index, self.training_indices)
         self.training_data = self.data.loc[self.training_indices]
@@ -180,7 +128,7 @@ class VLMData():
             print(f"Validation data size: {len(self.validation_data)}")
         self.training_dataset = VLMDataset(self.training_data, self.encoded_images_file_path)
         self.validation_dataset = VLMDataset(self.validation_data, self.encoded_images_file_path)
-        self.collator = VLMCollator(tokenizer, self.max_length, special_token_map, self.num_patches)
+        self.collator = VLMCollator(prosessor, tokenizer, self.max_length, special_token_map, self.num_patches)
     
     def get_data(self):
         return self.training_dataset, self.validation_dataset

@@ -31,7 +31,7 @@ class AtriVLM(LlamaForCausalLM):
         else:
             self.visual = None
     
-    def forward(self, input_ids=None, encoded_image=None, labels=None, past_key_values = None, attention_mask = None, inputs_embeds = None, **kwargs):
+    def forward(self, input_ids=None, images= None, encoded_image=None, labels=None, past_key_values = None, attention_mask = None, inputs_embeds = None, **kwargs):
         """
         Forward pass for the VLM model that combines image and text embeddings.
         
@@ -40,6 +40,8 @@ class AtriVLM(LlamaForCausalLM):
             encoded_image (torch.FloatTensor): Encoded image features of shape (batch_size, num_patches, hidden_dim)
             labels (torch.LongTensor): Labels for computing the language modeling loss
         """
+        if images is not None:
+            encoded_image = self.visual.encode_image(images)
         if not past_key_values and (encoded_image is not None):
             encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
             # Process image features through the adapter
@@ -133,7 +135,7 @@ class AtriVLM(LlamaForCausalLM):
             "encoded_image": processed_images if processed_images.size(0) > 0 else None
         }
     
-    def prepare_for_generation(self, input_ids, encoded_image, **kwargs):
+    def prepare_for_generation(self, input_ids, images, **kwargs):
         """
         Prepare KV cache for generation by processing the image and initial tokens.
         
@@ -144,7 +146,7 @@ class AtriVLM(LlamaForCausalLM):
         Returns:
             past_key_values: Tuple containing the key and value states to be used for subsequent generation
         """
-        encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
+        encoded_image = self.visual.encode_image(images)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
         

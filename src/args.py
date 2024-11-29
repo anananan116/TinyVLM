@@ -55,7 +55,7 @@ class CustomTrainingArgs(TrainingArguments):
         metadata={'help': 'Number of steps between saves.'}
     )
     save_total_limit: int = field(
-        default=3,
+        default=4,
         metadata={'help': 'Number of saves to keep.'}
     )
     save_strategy: str = field(
@@ -88,7 +88,7 @@ class VLMTrainingArguments:
     )
     
     data_path: str = field(
-        default='filtered/',
+        default='cache/',
         metadata={'help': 'Path to data files.'}
     )
     
@@ -98,7 +98,7 @@ class VLMTrainingArguments:
     )
     
     encoded_images_file_path: str = field(
-        default='encoded/',
+        default='images/',
         metadata={'help': 'Path to encoded images'}
     )
     

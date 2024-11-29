@@ -6,5 +6,6 @@
         "contiguous_gradients": true
     },
     "train_batch_size": "auto",
-    "train_micro_batch_size_per_gpu": "auto"
+    "train_micro_batch_size_per_gpu": "auto",
+    "gradient_accumulation_steps": "auto"
 }
