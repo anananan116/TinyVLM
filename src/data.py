@@ -18,6 +18,8 @@ class VLMDataset(Dataset):
         self.image_file_path = image_file_path
         self.data = data
         self.image_placeholder = image_placeholder
+        self.data = self.data.reset_index(drop=True)
+        self.data = self.data.sample(frac=1).reset_index(drop=True)
     
     def __len__(self):
         return len(self.data)
