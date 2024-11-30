@@ -124,6 +124,11 @@ class ModelArguments:
         metadata={'help': 'Path to model config file.'}
     )
     
+    num_patches: int = field(
+        default=64,
+        metadata={'help': 'Number of patches in an image.'}
+    )
+    
     flashattention: bool = field(
         default=False,
         metadata={'help': 'Use FlashAttention?'}
