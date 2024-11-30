@@ -17,6 +17,7 @@ from src import (
     CustomTrainingArgs,
     ModelArguments,
     VLMTrainingArguments,
+    get_preprocessing_pipeline,
 )
 from .utils import TensorBoardCallback
 
@@ -51,10 +52,12 @@ def main():
     if is_main_process:
         logger.info(f"Additional tokens: {additional_tokens_dict}")
     
-    model, tokenizer, special_token_map, prosessor = get_model_and_tokenizer(model_args, additional_tokens_dict, load_vision_model=True)
+    model, tokenizer, special_token_map = get_model_and_tokenizer(model_args, additional_tokens_dict, load_vision_model="vision_model.pth")
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_token_id = tokenizer.eos_token_id
 
+    prosessor = get_preprocessing_pipeline()
+    
     data = VLMData(training_args, tokenizer, special_token_map, prosessor = prosessor)
     train_dataset, eval_dataset = data.get_data()
     collate_fn = data.get_collator()

@@ -92,7 +92,7 @@ class VLMCollator:
     
     def __call__(self, batch):
         instruction, inputs, outputs, images = zip(*batch)
-        pixel_values = self.processor(images, return_tensors="pt")["pixel_values"]
+        pixel_values = self.processor(images)
         
         training_inputs, eval_inputs = self.apply_chat_format(instruction, inputs, outputs)
         labels = self.create_labels(training_inputs)

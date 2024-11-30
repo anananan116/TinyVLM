@@ -1,10 +1,10 @@
 from .modeling_llama import AdapterMLP, DEFAULT_SYSTEM_PROMPT, LlamaForCausalLM
 from .configuration_llama import VLMConfig
-from .configuration_clip import CLIPConfig
-from .visual_modeling import CLIPModel
+from .visual import EVAVisionTransformer, JinaCLIPVisionConfig
 import torch
 from torch import nn
 from transformers import AutoProcessor
+from ...processor import get_preprocessing_pipeline
 
 class AtriVLM(LlamaForCausalLM):
     def __init__(self, config: VLMConfig):
@@ -18,18 +18,16 @@ class AtriVLM(LlamaForCausalLM):
             raise ValueError("Special token map not found")
         self.image_adapter = AdapterMLP(config)
         self.num_patches = config.num_patches
-        self.processor = AutoProcessor.from_pretrained(config.pretrained_vision_model).image_processor
+        self.processor = get_preprocessing_pipeline()
         self.img_place_holder = "<IMGPLH>"
         self.img_start_token = "<IMAGE>"
         self.img_end_token = "<IMAGE_END>"
         self.image_token = "<Image_Token>"
-        if config.load_vision_model:
-            if isinstance(config.visual_config, dict):
-                self.visual = CLIPModel(CLIPConfig(**config.visual_config))
-            else:
-                self.visual = CLIPModel(config.visual_config)
+        self.num_patches = config.num_patches
+        if isinstance(config.visual_config, dict):
+            self.visual = EVAVisionTransformer(JinaCLIPVisionConfig(**config.visual_config))
         else:
-            self.visual = None
+            self.visual = EVAVisionTransformer(config.visual_config)
     
     def forward(self, input_ids=None, images= None, encoded_image=None, labels=None, past_key_values = None, attention_mask = None, inputs_embeds = None, **kwargs):
         """
@@ -41,7 +39,7 @@ class AtriVLM(LlamaForCausalLM):
             labels (torch.LongTensor): Labels for computing the language modeling loss
         """
         if images is not None:
-            encoded_image = self.visual.encode_image(images)
+            encoded_image = self.visual(images, num_patches = self.num_patches)
         if not past_key_values and (encoded_image is not None):
             encoded_image = encoded_image.to(self.get_input_embeddings().weight.dtype)
             # Process image features through the adapter
@@ -85,8 +83,8 @@ class AtriVLM(LlamaForCausalLM):
         processed_images = []
         for image in images:
             # Process image through vision encoder
-            pixel_values = self.processor(image, return_tensors="pt")["pixel_values"].to(self.visual.vision_model.embeddings.patch_embedding.weight.device)
-            image_features = self.visual.encode_image(pixel_values)
+            pixel_values = self.processor(image).to(self.visual.vision_model.embeddings.patch_embedding.weight.device)
+            image_features = self.visual(pixel_values, num_patches = self.num_patches)
             processed_images.append(image_features)
         
         # Stack all processed images
@@ -146,7 +144,7 @@ class AtriVLM(LlamaForCausalLM):
         Returns:
             past_key_values: Tuple containing the key and value states to be used for subsequent generation
         """
-        encoded_image = self.visual.encode_image(images)
+        encoded_image = self.visual(images, num_patches = self.num_patches)
         # Process image features through the adapter
         processed_image = self.image_adapter(encoded_image)
         
