@@ -36,6 +36,8 @@ def main():
     training_args, custom_training_args, model_args = parser.parse_args_into_dataclasses()
     for key, value in vars(custom_training_args).items():
         setattr(training_args, key, value)
+    for key, value in vars(model_args).items():
+        setattr(training_args, key, value)
     is_main_process = dist.get_rank() == 0
     if is_main_process:
         print(f"Training arguments: {training_args}")

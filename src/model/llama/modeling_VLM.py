@@ -1,6 +1,6 @@
 from .modeling_llama import AdapterMLP, DEFAULT_SYSTEM_PROMPT, LlamaForCausalLM
 from .configuration_llama import VLMConfig
-from .visual import EVAVisionTransformer, JinaCLIPVisionConfig
+from .visual import EVAVisionTransformer
 import torch
 from torch import nn
 from transformers import AutoProcessor
@@ -24,10 +24,31 @@ class AtriVLM(LlamaForCausalLM):
         self.img_end_token = "<IMAGE_END>"
         self.image_token = "<Image_Token>"
         self.num_patches = config.num_patches
-        if isinstance(config.visual_config, dict):
-            self.visual = EVAVisionTransformer(JinaCLIPVisionConfig(**config.visual_config))
-        else:
-            self.visual = EVAVisionTransformer(config.visual_config)
+        self.visual = self.build_visual_tower(config.visual_config)
+            
+    def build_visual_tower(self, config):
+        return EVAVisionTransformer(
+            img_size=config.image_size,
+            patch_size=config.patch_size,
+            num_classes=config.embed_dim,
+            use_mean_pooling=False,
+            init_values=config.ls_init_value,
+            patch_dropout=config.patch_dropout,
+            embed_dim=config.width,
+            depth=config.layers,
+            num_heads=config.width // config.head_width,
+            mlp_ratio=config.mlp_ratio,
+            qkv_bias=config.qkv_bias,
+            drop_path_rate=config.drop_path_rate,
+            xattn=config.x_attention,
+            rope=config.rope_embeddings,
+            postnorm=config.post_norm,
+            pt_hw_seq_len=config.pt_hw_seq_len,
+            intp_freq=config.intp_freq,
+            naiveswiglu=config.naive_swiglu,
+            subln=config.subln,
+            proj_type=config.proj_type,
+        )
     
     def forward(self, input_ids=None, images= None, encoded_image=None, labels=None, past_key_values = None, attention_mask = None, inputs_embeds = None, **kwargs):
         """

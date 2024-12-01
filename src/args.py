@@ -107,11 +107,6 @@ class VLMTrainingArguments:
         metadata={'help': 'Maximum length of input sequences.'}
     )
     
-    num_patches: int = field(
-        default=64,
-        metadata={'help': 'Number of patches in an image.'}
-    )
-    
 @dataclass
 class ModelArguments:
     special_token_config: Optional[str] = field(
@@ -125,7 +120,7 @@ class ModelArguments:
     )
     
     num_patches: int = field(
-        default=64,
+        default=81,
         metadata={'help': 'Number of patches in an image.'}
     )
     

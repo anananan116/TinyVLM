@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from transformers import PretrainedConfig, logging
 from einops import rearrange, repeat
 from math import pi
+from dataclasses import dataclass, field, asdict
 
 try:
     warnings.filterwarnings('ignore', category=FutureWarning, module='timm')
@@ -77,7 +78,7 @@ class JinaCLIPVisionConfig(PretrainedConfig):
         head_width: int = 64,
         mlp_ratio: float = 2.6667,
         ls_init_value: Optional[float] = None,
-        patch_dropout: float = 0.1,
+        patch_dropout: float = 0.0,
         qkv_bias: bool = True,
         fused_layer_norm: bool = False,
         x_attention: bool = True,
@@ -137,6 +138,31 @@ class JinaCLIPVisionConfig(PretrainedConfig):
                 'for all configurations of models and can yield errors.'
             )
         return cls.from_dict(configdict, **kwargs)
+    
+    def get_config(self):
+        return {
+            "layers": self.layers,
+            "embed_dim": self.embed_dim,
+            "width": self.width,
+            "head_width": self.head_width,
+            "mlp_ratio": self.mlp_ratio,
+            "image_size": self.image_size,
+            "patch_size": self.patch_size,
+            "ls_init_value": self.ls_init_value,
+            "patch_dropout": self.patch_dropout,
+            "qkv_bias": self.qkv_bias,
+            "fused_layer_norm": self.fused_layer_norm,
+            "x_attention": self.x_attention,
+            "post_norm": self.post_norm,
+            "rope_embeddings": self.rope_embeddings,
+            "pt_hw_seq_len": self.pt_hw_seq_len,
+            "intp_freq": self.intp_freq,
+            "naive_swiglu": self.naive_swiglu,
+            "subln": self.subln,
+            "drop_path_rate": self.drop_path_rate,
+            "proj_type": self.proj_type,
+            "model_type": self.model_type
+        }
 
 class VisionRotaryEmbedding(nn.Module):
     def __init__(
@@ -784,6 +810,7 @@ class EVAVisionTransformer(nn.Module):
         naiveswiglu=False,
         subln=False,
         proj_type=None,
+        **kwargs,
     ):
         super().__init__()
         self.image_size = img_size
@@ -878,12 +905,6 @@ class EVAVisionTransformer(nn.Module):
 
         self.apply(self._init_weights)
         self.fix_init_weight()
-
-        if isinstance(self.head, nn.Linear):
-            trunc_normal_(self.head.weight, std=0.02)
-            self.head.weight.data.mul_(init_scale)
-            if qkv_bias:
-                self.head.bias.data.mul_(init_scale)
 
         # setting a patch_dropout of 0. would mean it is disabled and this function
         # would be the identity fn
@@ -985,14 +1006,14 @@ class EVAVisionTransformer(nn.Module):
                 return x[:, 0]
         return x
 
-    def forward(self, x, n_patches=64):
+    def forward(self, x, num_patches=81):
         image_embeds = self.forward_features(x, return_all_features=True)
         
         image_embeds = image_embeds[:, 1:, :]
         b, n, c = image_embeds.shape
         sqrt_n = int(n**0.5)
         image_embeds = image_embeds.permute(0, 2, 1).view(b, c, sqrt_n, sqrt_n)
-        stride = int(sqrt_n // (n_patches ** 0.5))
+        stride = int(sqrt_n // (num_patches ** 0.5))
         image_embeds = torch.nn.functional.avg_pool2d(image_embeds, kernel_size=(stride, stride), stride=stride)
         image_embeds = image_embeds.view(b, c, -1).permute(0, 2, 1).contiguous()
         

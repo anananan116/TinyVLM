@@ -26,7 +26,7 @@ def evaluate_caption(model, dataloader, accelerator, tokenizer):
             batch_metrics = defaultdict(float)
             # Prepare KV cache
             images = batch['images'].to(device)
-            encoded_images = model.visual.encode_image(images)
+            encoded_images = model.visual(images)
             inputs = batch['eval_inputs']
             # Generate captions
             outputs = model.generate(

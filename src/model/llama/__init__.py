@@ -150,7 +150,8 @@ def get_model_and_tokenizer(model_args, additional_tokens_dict, device="cuda", l
     model = AtriVLM.from_pretrained(pretrained_model, config = config)
     if config.load_vision_model:
         with open(load_vision_model, 'rb') as f:
-            model.visual.load_state_dict(torch.load(f))
+            state_dict = torch.load("vision_model.pth")
+            model.visual.load_state_dict(state_dict)
     
     if config.adjust_embedding_len:
         model.resize_token_embeddings(config.adjust_embedding_len, mean_resizing=True)
