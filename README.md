@@ -340,6 +340,10 @@ We observe that our model with 1.5B parameters have comparable performance when 
 
 Here we show some detailed results from the MME benchmark.
 
+###### loss plot
+
+![image](assets/eval_loss.png)
+
 ###### Perception Metrics
 
 | Category | Score | Accuracy |
