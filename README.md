@@ -80,7 +80,7 @@ In this project, we focus on training a vision language model. A vision language
 
 ### Training Setup
 
-Our training approach follows a carefully designed two-stage process:
+Our training approach follows a carefully designed three-stage process:
 
 1. **Initial Image Captioning Phase**
    - Train on a large-scale caption dataset, prioritizing breadth over precision
@@ -90,16 +90,21 @@ Our training approach follows a carefully designed two-stage process:
      - Build a comprehensive vocabulary for describing visual content
      - Understand common objects, actions, and scenes in images
 
-2. **Fine-tuning Phase**
+2. **Multi-Task SFT Phase**
    - Instruction tuning on:
      - VQA (Visual Question Answering) datasets
-     - High-quality, detailed caption datasets
+     - Knowledgeable Visual QA datasets
+     - Classification datasets
+     - Reasoning datasets
+     - Generation datasets
    - This advanced stage enables:
      - Complex reasoning about visual content
      - Handling specific user instructions and queries
      - More nuanced and accurate image descriptions
      - Understanding and responding to diverse user prompts
-     - Better alignment with human intent and expectations
+
+3. **Instruction Tunning Phase**
+
 
 The result of the two stages are our First and Final model respectively.
 
@@ -114,14 +119,15 @@ Our model combines a Llama 3.2 1B language model with a CLIP ViT-L (~400M parame
     - This dataset provides over 130 million image links, but we are scaling down. We downloaded the first 5 million rows of the dataset, and of these we will only use the rows where the image link gives a successful response code.
     - All initial images are not uniform in any regard, however during preprocessing, all images will be cropped
     - The dataset is cosist of a synthized caption and an url to the image.
-- Instruction Tunning Data
-  - [M3IT (Comprehensive visual instruction tunning dataset)](https://huggingface.co/datasets/MMInstruction/M3IT)
-  - [LlavaR (Visual interaction data created by GPT-4)](https://llavar.github.io/#data)
+  - Multi-Task SFT Data
+    - [M3IT (Comprehensive visual instruction tunning dataset)](https://huggingface.co/datasets/MMInstruction/M3IT)
+  - Instruction Tunning Daat
+    - [LlavaR (Visual interaction data created by GPT-4)](https://llavar.github.io/#data)
 
-  - [LaVA Visual Instruct 150K (Visual interaction data created by GPT-4)](https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K?row=0)
+    - [LaVA Visual Instruct 150K (Visual interaction data created by GPT-4)](https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K?row=0)
 
-  - [Alpaca (Text only instruction tunning dataset, to restore text-only performance)](https://github.com/tatsu-lab/stanford_alpaca?tab=readme-ov-file#data-release)
-    - These datasets provide conversation data on diverse tasks. Format varies.
+    - [Alpaca (Text only instruction tunning dataset, to restore text-only performance)](https://github.com/tatsu-lab/stanford_alpaca?tab=readme-ov-file#data-release)
+      - These datasets provide conversation data on diverse tasks. Format varies.
 
 ### Pretraining Data
 
@@ -263,29 +269,32 @@ Here's a nice figure that shows our model architecture from the [Emu 2](https://
 
 In our training, we freeze the vision encoder and only train the adapter and the LLM with language modeling objective.
 
-### Hyperparameters Pretraining
+### Hyperparameters
 
-| Hyperparameters | Pretraining |
-|-----------|--------|
-| Learning rate | 1e-5 |
-| LR decay | Cosine |
-| Weight decay | 0 |
-| Per device batch size | 8 |
-| Gradient accumulation steps | 8 |
-| Precision | BF16 |
-| Total samples | 1.012M |
-| Optimizer | AdamW BNB 8bit |
-| Number of GPUs | 1 |
-| Global batch size | 64 |
+| Hyperparameters | Pretraining | Multi-Task SFT |
+|-----------|--------|-------------|
+| Learning rate | 2e-5 | 1e-5|
+| LR decay | Cosine | Cosine |
+| Weight decay | 0 | 0 |
+| Per device batch size | 8 | 4 |
+| Gradient accumulation steps | 8 | 8 |
+| Precision | BF16 | BF16 |
+| Total samples | 3.75M | 1.02M |
+| Optimizer | AdamW | AdamW_bnb_8bit|
+| Number of GPUs | 2 | 2 |
+| Global batch size | 128 | 64 |
+| Visual Encoder | Hot | Hot |
+| Connector | Hot | Hot |
+| LLM | Frozen | Hot |
 
 ### Training Stats
 
-| Stats | Pretraining |
-|-----------|--------|
-| GPU | 1xNvidia RTX 3090 |
-| Training Time | 30 Hours |
-| Visual Encoder Init. | openai/clip-vit-large-patch14-336 |
-| Multi-Modal Modeling Init. | meta-llama/Llama-3.2-1B-Instruct |
+| Stats | Pretraining | Multi-Task SFT |
+|-----------|--------|---------|
+| GPU | 2xNvidia RTX 3090 | 2xNvidia RTX 3090 |
+| Training Time | 40 Hours | 25 Hours |
+| Visual Encoder Init. | openai/clip-vit-large-patch14-336 | Pretrain |
+| Multi-Modal Modeling Init. | meta-llama/Llama-3.2-1B-Instruct | Pretrain |
 
 ## Results
 
@@ -303,27 +312,70 @@ We notice a smooth training curve, which indicates a stable training. We also no
 
 As our evaluation, we mainly assess our model on the BLEU score. BLEU score measures how good the model's output caption matches the ground truth caption. BLEU-n means BLEU score with n-gram. Note that though the BLEU score seems to be low in our setup, this could be caused by the extreme diveristy of the pre-training stage training captions rather than underfit of the model.
 
-#### Next model:
-So far, we finished the pre-training for our model, and we will start to do instruction tuning (fine-tuning). Since the pre-trained model is limited to recognize common objects and actions, when we give a vague or confusing image (artworks), the accuracy of the model prediction will drop dramatically. As a result, the fine-tuning is necessary for better handling those scenarios, and we will follow the steps we mentioned earlier and provide more details as we move on.
 
-## Conclusion for the pre-training process  
+#### Conclusion for the pre-training process  
+
 By utilizing CLIP's vision transformer and Llama architecture, we were able to get a pretty decent pre-trained model that can have high accuracy on recognizing common objects and actions. We were able to decrease the loss as the model trained, and BLEU Scores steadily increased as trained steps increased. Overall, the BLEU score and the model performance meet our initial expectation. In order to allow our model to recognize more complex and unusual objects or patterns, we will collect more VQA data from more ML resources, pre-process them, and then use them for the instruction tuning. By feeding more random and variety of images, we expect the model will have higher accuracy in general, be able to answer specific user's questions, and be better at predicting user's intent and expectations.
 
 
 #### Image Caption Samples
-This could be reproduced by runing generate.ipynb notebook.
 
 ![image](assets/output.png)
 
-#### What's Next
-Though we observe that the model clearly know what's in the image, however, some captions that the models give is confusing. It seems like it is sometimes writing a introduction to an item in a online shop, and sometimes it seems to give wired output that describe something related to the image. This behavior is actually expected when training our model with pretraining data since a lot of them are crawled and poorly labeled. Plus, the model right now only perform image captioning whatever prompt we give. 
+### Multi-Task SFT Stage (Model 2)
 
-To resolve this problem, we will perform continue-training on instruction tunning data as mentioned in the Model at A Glance Section. In instruction-tunning, we will perform training on more carefully labeled image captioning dataset along with various visual-language tasks, e.g. visual question answering, object reconization, text reading. In this traning pahse, we train the model to have better complex reasoning about visual content and handling specific user instructions and queries with the above mentioned 4 datasets (7 tasks, collected from 29 original datasets).
+#### Evaluations
 
-## Conclusion for the pre-training process  
-By utilizing CLIP's vision transformer and Llama architecture, we were able to get a pretty decent pre-trained model that can have high accuracy on recognizing common objects and actions. We were able to decrease the loss as the model trained, and BLEU Scores steadily increased as trained steps increased. Overall, the BLEU score and the model performance meet our initial expectation. In order to allow our model to recognize more complex and unusual objects and provide better descriptions on images, we will collect more VQA data from more ML resources, pre-process them, and then use them for the instruction tuning. By feeding more random and variety of images, we expect the model will have higher accuracy in general, be able to answer specific user's questions, and be better at predicting user's intent and expectations.
+| Model_name | Num_parameters | MME |
+|----------|--------|--------|
+| [Zhang199/TinyLLaVA-Qwen2-0.5B-SigLIP](https://huggingface.co/Zhang199/TinyLLaVA-Qwen2-0.5B-SigLIP)| 1B | 1153 |
+| [tinyllava/TinyLLaVA-Gemma-SigLIP-2.4B](https://huggingface.co/tinyllava/TinyLLaVA-Gemma-SigLIP-2.4B) | 3B | 1339.0 |
+| [Zhang199/TinyLLaVA-Qwen2.5-3B-SigLIP](https://huggingface.co/Zhang199/TinyLLaVA-Qwen2.5-3B-SigLIP)| 3.8B | 1438.7 |
+| [LLaVA-1.5-7B](https://huggingface.co/llava-hf/llava-1.5-7b-hf) | 7B| 1510.7 |
+| TinyVLM(Ours) | 1.5B | 1370.02 |
 
+##### MME Benchmark Results
 
+###### Perception Metrics
+
+| Category | Score | Accuracy |
+|----------|--------|-----------|
+| Existence | 175.00 | 91.67% |
+| Count | 75.00 | 55.00% |
+| Position | 85.00 | 55.00% |
+| Color | 126.67 | 73.33% |
+| Posters | 79.25 | 50.68% |
+| Celebrity | 86.18 | 57.35% |
+| Scene | 150.25 | 83.25% |
+| Landmark | 124.50 | 72.50% |
+| Artwork | 99.25 | 62.75% |
+| OCR | 65.00 | 55.00% |
+**Total Perception Score:** 1066.09
+
+###### Cognition Metrics
+
+| Category | Score | Accuracy |
+|----------|--------|-----------|
+| Commonsense Reasoning | 91.43 | 60.00% |
+| Numerical Calculation | 80.00 | 55.00% |
+| Text Translation | 80.00 | 50.00% |
+| Code Reasoning | 52.50 | 42.50% |
+**Total Cognition Score:** 303.93
+
+###### Overall Performance Metrics
+
+- **Total Score:** 1370.02
+- **Overall Accuracy:** 65.21%
+- **Overall Precision:** 64.99%
+- **Overall Recall:** 72.00%
+- **Total Other Answers:** 58
+
+###### Confusion Matrix
+
+|          | Predicted Positive | Predicted Negative |
+|----------|-------------------|-------------------|
+| Actual Positive | 828 (TP) | 322 (FN) |
+| Actual Negative | 446 (FP) | 720 (TN) |
 
 
 ## Acknowledgement
