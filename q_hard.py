@@ -1,0 +1,22 @@
+{
+    "3.png": "Is it a fox, a wolf, or something else entirely in the image?",
+    "4.jpg": "How many people are not wearing hat?",
+    "5.png": "If the mushrooms had eyes, how many could they plausibly have?",
+    "66.jpg": "What unexpected combination of ingredients could be inside the hotdog?",
+    "9780593649237.jpg": "Is it a fox, a raccoon, or a cleverly disguised object in the image?",
+    "artworks-000360728946-bilq7t-t500x500.jpg": "Is it a cow, a person wearing a cow costume, or an abstract representation?",
+    "avatars-000508491087-32hktm-t1080x1080.jpg": "Is it chocolate, a person holding chocolate, or something imitating both?",
+    "bx108577-plhp2UMSmEhk.jpg": "How many distinct reflections or silhouettes of people can you detect?",
+    "depositphotos_35630897-stock-photo-random-chance-luck-gumball-machine.jpg": "What is the most peculiar and colorful object hidden inside the image?",
+    "hq720.jpg": "What is the function of the shiny blue object in the image, and why might it be there?",
+    "images (1).jpg": "Is it a cow, a man in a cow mask, or an entirely unrelated figure?",
+    "images (2).jpg": "What element in the picture defies your initial expectations?",
+    "images (3).jpg": "Are there any flags, hidden symbols, or unexpected patterns in the image?",
+    "images (4).jpg": "Is it a real dog, a robotic dog, or an illusion of one?",
+    "images.jpg": "What unique or hybrid creature could the animal in the image represent?",
+    "penguin_random_house_publishing_logo.jpg": "What specific color details or patterns make the penguin's design unique?",
+    "Random-Pictures-of-Conceptual-and-Creative-Ideas-02.jpg": "What unusual material or concept could the house be built upon?",
+    "rr33-10.jpg": "Is it a human, a distorted face, or a purely optical illusion in the image?",
+    "sddefault.jpg": "Based on the image, can you calculate the approximate density of the hair strands?",
+    "unnamed.png": "How many hands, partial hands, or objects resembling hands are discernible in the picture?"
+}
