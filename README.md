@@ -334,7 +334,11 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 | [LLaVA-1.5-7B](https://huggingface.co/llava-hf/llava-1.5-7b-hf) | 7B| 1510.7 |
 | TinyVLM(Ours) | 1.5B | 1370.02 |
 
+We observe that our model with 1.5B parameters have comparable performance when compared against some 3B models on the MME benchmark. More evaluation benchmarks are on the way.
+
 ##### MME Benchmark Results
+
+Here we show some detailed results from the MME benchmark.
 
 ###### Perception Metrics
 
@@ -377,6 +381,11 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 | Actual Positive | 828 (TP) | 322 (FN) |
 | Actual Negative | 446 (FP) | 720 (TN) |
 
+In Perception, we observe that our model achieves good performance on several tasks like Existence, Color, and Scene, but fall short on some tasks like OCR, Count, and position. This could be caused by the lack of certain training data targeted at those tasks and the inherent small size of the model. Due to similar reason, we also observe a weaker performance on conition metrics.
+
+#### QA Samples
+
+![image](assets/output_it.png)
 
 ## Acknowledgement
 
