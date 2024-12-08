@@ -2,23 +2,7 @@
 
 ## Get Started
 
-To install dependencies:
-
-If you have a Nvidia GPU with more than 4GB of free VRAM, please first install torch with cuda if you haven't:
-
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-```
-
-If you are using a apple device with an M-Chip, please simply install torch by:
-
-```bash
-pip install torch torchvision torchaudio
-```
-
-If you want to run the model on other backends supported by pytorch, please search for how to install torch with that backend and make neccessary changes to the code below.
-
-Note: Running on CPU is not recommended as it is very ineffcient.
+Follow Pytorch's [official guide](https://pytorch.org/get-started/locally/) to install pytorch. Installation with CUDA is recommended if you are using Windows/Linux.
 
 Then, install the transformers package and other dependencies:
 
@@ -27,8 +11,6 @@ pip install flask pillow transformers
 ```
 
 ### Web Interface
-
-Update: Web interface is available!
 
 Clone this repository and run
 
@@ -49,7 +31,7 @@ import torch
 model = AutoModelForCausalLM.from_pretrained(
     "anananan116/TinyVLM",
     trust_remote_code = True,
-    torch_dtype=torch.float16,
+    torch_dtype=torch.bfloat16,
     ).to('cuda').eval()
 tokenizer = AutoTokenizer.from_pretrained("anananan116/TinyVLM")
 
@@ -57,7 +39,7 @@ tokenizer = AutoTokenizer.from_pretrained("anananan116/TinyVLM")
 # the number of `<IMGPLH>` should be equal to the number of input images
 
 prompt = "Here's an image:<IMGPLH>Describe this image."
-image = Image.open(requests.get('https://github.com/anananan116/TinyVLM/blob/main/test.png?raw=true',stream=True).raw)
+image = Image.open(requests.get('https://github.com/anananan116/TinyVLM/blob/main/assets/test_images/5.png?raw=true',stream=True).raw)
 inputs = model.prepare_input_ids_for_generation([prompt], [image], tokenizer)
 
 with torch.no_grad():
@@ -70,17 +52,22 @@ with torch.no_grad():
     )
 
 output_text = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+print(output_text)
 ```
 
-## Model at A Glance
+## Introduction
 
 ### Tiny Vision-Language Model
 
 In this project, we focus on training a vision language model. A vision language model is a neural network architecture that bridges the gap between visual and textual information, enabling AI systems to understand, describe, and reason about images in natural language. These models combine computer vision capabilities with natural language processing to perform tasks such as image captioning, visual question answering (VQA), and image-based reasoning. By learning joint representations of images and text, these models can establish meaningful connections between visual elements and linguistic descriptions, making them fundamental to applications in AI assistants, content analysis, and accessibility tools.
 
-### Training Setup
+Our model combines a Llama 3.2 1B language model with a CLIP ViT-L (~400M parameters) vision encoder. This lightweight approach makes the model both practical and useful by reducing computational requirements and deployment costs while maintaining reasonable performance. The smaller footprint enables deployment on edge devices and servers with limited resources, making AI more accessible to a broader range of applications and organizations. This approach demonstrates that effective vision-language models don't necessarily require massive architectures, offering a balance between performance and efficiency.
 
-Our training approach follows a carefully designed three-stage process:
+## Method
+
+### Overview
+
+Our training approach follows a carefully designed two-stage process:
 
 1. **Initial Image Captioning Phase**
    - Train on a large-scale caption dataset, prioritizing breadth over precision
@@ -89,6 +76,7 @@ Our training approach follows a carefully designed three-stage process:
      - Learn broad visual-linguistic associations
      - Build a comprehensive vocabulary for describing visual content
      - Understand common objects, actions, and scenes in images
+   - This training stage produce the first model
 
 2. **Multi-Task SFT Phase**
    - Instruction tuning on:
@@ -102,17 +90,9 @@ Our training approach follows a carefully designed three-stage process:
      - Handling specific user instructions and queries
      - More nuanced and accurate image descriptions
      - Understanding and responding to diverse user prompts
+   - This training stage produce the second model
 
-3. **Instruction Tunning Phase**
-
-
-The result of the two stages are our First and Final model respectively.
-
-### "Tiny" Model
-
-Our model combines a Llama 3.2 1B language model with a CLIP ViT-L (~400M parameters) vision encoder. This lightweight approach makes the model both practical and useful by reducing computational requirements and deployment costs while maintaining reasonable performance. The smaller footprint enables deployment on edge devices and servers with limited resources, making AI more accessible to a broader range of applications and organizations. This approach demonstrates that effective vision-language models don't necessarily require massive architectures, offering a balance between performance and efficiency.
-
-## Data Exploration and Initial Preprocessing
+### Data Exploration and Initial Preprocessing
 
 - Pretraining Data
   - [Image Captioning (Text-Image Pairs)](https://huggingface.co/datasets/BAAI/CapsFusion-120M)
@@ -121,17 +101,11 @@ Our model combines a Llama 3.2 1B language model with a CLIP ViT-L (~400M parame
     - The dataset is cosist of a synthized caption and an url to the image.
   - Multi-Task SFT Data
     - [M3IT (Comprehensive visual instruction tunning dataset)](https://huggingface.co/datasets/MMInstruction/M3IT)
-  - Instruction Tunning Daat
-    - [LlavaR (Visual interaction data created by GPT-4)](https://llavar.github.io/#data)
+      - Comprehensive dataset for instruction tunning
 
-    - [LaVA Visual Instruct 150K (Visual interaction data created by GPT-4)](https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K?row=0)
+#### Pretraining Data
 
-    - [Alpaca (Text only instruction tunning dataset, to restore text-only performance)](https://github.com/tatsu-lab/stanford_alpaca?tab=readme-ov-file#data-release)
-      - These datasets provide conversation data on diverse tasks. Format varies.
-
-### Pretraining Data
-
-#### Download
+##### Download
 
 We implemented a robust and efficient parallel downloading system for handling large-scale image datasets. The system features automatic retry mechanisms, progress tracking, and chunked processing to handle millions of images. To ensure reliability, it includes comprehensive error handling and generates detailed download statistics and error reports. The system also supports checkpoint-resume functionality, allowing interrupted downloads to continue from where they left off.
 
@@ -139,7 +113,7 @@ Part of the image urls are no longer available anymore as the dataset was publis
 
 ![image](assets/download.png)
 
-#### Preprocess
+##### Preprocess
 
 For image preprocessing, we implemented an adaptive approach that intelligently handles images of varying aspect ratios:
 
@@ -149,15 +123,15 @@ For image preprocessing, we implemented an adaptive approach that intelligently 
 
 ![image](assets/aspect_ratio.png)
 
-#### Data Exploration
+##### Data Exploration
 
 To take a glance at what kinds of images are in the datasets, we perform image classification and observe the distribution of popular classes. NOTE that this method could be inaccurate since the quality of the labels are not garenteed. However, this is ONLY a data exploration practice, and it has noting to do with our training.
 
-##### Generating labels
+###### Generating labels
 
 To effectively categorize our diverse dataset, we developed a novel approach combining GPT and CLIP to create a rich set of image labels. Rather than relying on traditional pre-defined categories (like ImageNet classes), we first created base categories and used GPT to expand each category with 50-100 semantically related descriptions. This process helped us capture the nuanced variations in our dataset while maintaining categorical coherence. The expanded label set is stored in "labels.py" and serves as the foundation for our zero-shot classification.
 
-##### CLIP for Zero-Shot Classification
+###### CLIP for Zero-Shot Classification
 
 We leveraged CLIP (Contrastive Language-Image Pre-training), a powerful vision-language model that can perform zero-shot image classification through natural language descriptions. CLIP works by learning to align image and text representations in a shared embedding space, allowing it to match images with textual descriptions even for categories it hasn't explicitly been trained on.
 
@@ -174,7 +148,7 @@ This approach allows us to categorize images using our custom-generated labels w
 
 ![image](assets/image.png)
 
-### Data preparing for instruction tuning
+#### Data preparing for instruction tuning
 
 1. Download questions and answers from the dataset
 2. Create DataFrame from json data files which include questions and answers
@@ -184,40 +158,11 @@ This approach allows us to categorize images using our custom-generated labels w
 6. Combine system prompt, user questions, and answers into one col and label them with corrsponding image_id
 7. Output the data as csv file
 
-### Encoding Images
-
-As we don't train the image encoder (we will mention this in detail later), we can see encoding the images as a preprocessing of the original images to make our real training more effcient. We implemented a robust and efficient image encoding pipeline to prepare our training data. The process consists of two key steps:
-
-#### Reference-based Filtering
-
-First, we address a common issue in large-scale web-scraped image datasets - the presence of "image not available" placeholders. A placeholder is usually a default image showing that the content is not available. Here's an example(we also use this image as the reference image):
-
-![image](reference.jpg)
-
-Our solution:
-
-- Uses a reference image that represents a typical "image not available" placeholder
-- Computes CLIP embeddings for this reference image and extract the \<CLS\> position, which represent the overall semantic of the image. (No extra computation cost since it's originaly a part of image encoding).
-- Calculates cosine similarity between each dataset image and the reference
-- Filters out images that exceed a similarity threshold of 0.3, effectively removing various forms of placeholder images
-
-#### Efficient Patch-based Encoding
-
-For the remaining valid images, we employ a modified CLIP vision encoder with optimized processing:
-
-- Processes images in batches through CLIP's ViT-L/14 architecture
-- Extracts and pools patch-level features to a fixed size (64) while preserving spatial information
-- Implements asynchronous disk writing and memory-efficient data handling
-- Features automatic checkpointing and detailed progress tracking
-- Enables efficient processing of large-scale datasets through parallel processing
-
-This process ensures that our training data is both clean (free of placeholder images) and represented in a rich, spatially-aware format suitable for vision-language tasks.
-
-## Model Architecture
+### Model Architecture
 
 Our model follows a vision-language architecture that combines a modified CLIP visual encoder with a Llama language model, connected through a specialized adaptation layer.
 
-### Visual Encoder
+#### Visual Encoder
 
 We utilize CLIP's ViT-L/14 vision transformer as our visual backbone but modify its output processing in several key ways:
 
@@ -229,7 +174,7 @@ We utilize CLIP's ViT-L/14 vision transformer as our visual backbone but modify 
   - Maintains the spatial relationships between image regions
 - This modified approach provides a more detailed spatial representation of the image compared to the original CLIP's single vector representation
 
-### Large Language Model
+#### Large Language Model
 
 Our system builds upon the Llama architecture, a transformer-based language model that uses:
 
@@ -244,7 +189,7 @@ The model processes text using a conventional token embedding layer, but is enha
 - `<Image_Token>`: Represents individual image patch embeddings (place holder)
 - `<IMAGE_END>`: Marks the end of image content
 
-### Vision-Language Adaptation
+#### Vision-Language Adaptation
 
 To bridge the semantic gap between visual and textual modalities, we implement:
 
@@ -265,11 +210,11 @@ Here's a nice figure that shows our model architecture from the [Emu 2](https://
 
 ![image](assets/emu.png)
 
-## Training
+### Training
 
 In our training, we freeze the vision encoder and only train the adapter and the LLM with language modeling objective.
 
-### Hyperparameters
+#### Hyperparameters
 
 | Hyperparameters | Pretraining | Multi-Task SFT |
 |-----------|--------|-------------|
@@ -287,7 +232,7 @@ In our training, we freeze the vision encoder and only train the adapter and the
 | Connector | Hot | Hot |
 | LLM | Frozen | Hot |
 
-### Training Stats
+#### Training Stats
 
 | Stats | Pretraining | Multi-Task SFT |
 |-----------|--------|---------|
@@ -295,6 +240,20 @@ In our training, we freeze the vision encoder and only train the adapter and the
 | Training Time | 40 Hours | 25 Hours |
 | Visual Encoder Init. | openai/clip-vit-large-patch14-336 | Pretrain |
 | Multi-Modal Modeling Init. | meta-llama/Llama-3.2-1B-Instruct | Pretrain |
+
+### File Structure
+
+```
+data
+├── prepare_pretrain.py
+├── adapt_pretrain_data.py
+├── prepare_instruction_tunning.py
+├── adapt_it_data.py
+src
+├── model
+│   ├── llama
+│   │   ├── modeling_llama.py
+```
 
 ## Results
 
@@ -326,17 +285,15 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 
 Since it will be difficult and time-consuming to run our fine tuning on a single notebook, we choose to break them down into different python files instead.  
 
-First, we prepare our data for instruction tuning by using:  
+#### loss plot
 
-[adapt_it_data.py](https://github.com/anananan116/TinyVLM/blob/main/data/adapt_it_data.py)
+![image](assets/eval_loss.png)
 
-[prepare_instruction_tunning.py](https://github.com/anananan116/TinyVLM/blob/main/data/prepare_instruction_tunning.py)
+Since our model is huge and took an average of 80 hrs to train, it will be difficult for us to compute an official fitting graph. Though the concept of overfitting is far far more complex than the graph shows when we are training models this size... We do have overfit because of the inherent bias of the datasets, but that's much more subtle stuff. \I think our next model will be doing more fine tuning to the current ones. We can continue to collect more data and do more instruction tuning in order to add more features to our model and provide a better accuracy on handling more complex images and scenes.
 
-We perform our instruction tuning our by running:  
+#### QA Samples
 
-[instruction_tunning.py](https://github.com/anananan116/TinyVLM/blob/main/main/instruction_tunning.py)
-
-The result of that will be presented in our Evaluations.
+![image](assets/output_it.png)
 
 #### Evaluations
 
@@ -354,15 +311,7 @@ We observe that our model with 1.5B parameters have comparable performance when 
 
 Here we show some detailed results from the MME benchmark.
 
-### loss plot 
-
-![image](assets/eval_loss.png)
-
-Since our model is huge and took an average of 80 hrs to train, it will be difficult for us to compute an official fitting graph. Though the concept of overfitting is far far more complex than the graph shows when we are training models this size... We do have overfit because of the inherent bias of the datasets, but that's much more subtle stuff. \I think our next model will be doing more fine tuning to the current ones. We can continue to collect more data and do more instruction tuning in order to add more features to our model and provide a better accuracy on handling more complex images and scenes.
-
 ###### Perception Metrics
-
-By running [calculation.py](https://github.com/anananan116/TinyVLM/blob/Milestone-4/calculation.py), we got the following result:
 
 | Category | Score | Accuracy |
 |----------|--------|-----------|
@@ -376,6 +325,7 @@ By running [calculation.py](https://github.com/anananan116/TinyVLM/blob/Mileston
 | Landmark | 124.50 | 72.50% |
 | Artwork | 99.25 | 62.75% |
 | OCR | 65.00 | 55.00% |
+
 **Total Perception Score:** 1066.09
 
 ###### Cognition Metrics
@@ -386,6 +336,7 @@ By running [calculation.py](https://github.com/anananan116/TinyVLM/blob/Mileston
 | Numerical Calculation | 80.00 | 55.00% |
 | Text Translation | 80.00 | 50.00% |
 | Code Reasoning | 52.50 | 42.50% |
+
 **Total Cognition Score:** 303.93
 
 ###### Overall Performance Metrics
@@ -403,13 +354,11 @@ By running [calculation.py](https://github.com/anananan116/TinyVLM/blob/Mileston
 | Actual Positive | 828 (TP) | 322 (FN) |
 | Actual Negative | 446 (FP) | 720 (TN) |
 
-### Conclusion to the second model
+#### Conclusion to the second model
 
 In Perception, we observe that our model achieves good performance on several tasks like Existence, Color, and Scene, but falls short on some tasks like OCR, Count, and position. This could be caused by the lack of certain training data targeted at those tasks and the inherent small size of the model. Due to similar reasons, we also observe a weaker performance on condition metrics. So far, we followed the blueprint of our project as planned in the early phase. By doing instruction tuning, we were able to allow our model to have chatgpt-like conservation other than simply through cold descriptions on images. Our model now is able to interpret what we want from our question and be able to answer as a personal assistance. We will continue to work on the model by doing more kinds of fine-turning to make it even more powerful to handle confused, unseen, and more complex scenes or images.
 
-#### QA Samples
 
-![image](assets/output_it.png)
 
 ## Acknowledgement
 
