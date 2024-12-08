@@ -257,6 +257,48 @@ src
 │   │   ├── modeling_llama.py
 ```
 
+## Evaluation on MME
+
+MME is a benchmark for evaluating Multimodal Large Language Model(MLLM), which is a more advanced version of LLM that can accept input more than just text data. MME benchmark has 14 subtasks in total to fully explore, test, and evolution the full potential of a MLLM, and each subtask can be scored up to 200 points. MME is trustworthy to test our model since it successfully and comprehensively evaluates a total of 30 advanced MLLMs including BLIP-2, LLaVa, MiniGPT-4, ect...
+
+### Perception Metrics:
+
+Existence - the ability to recognize something exist
+Count - the ability to have the correct count of certain item
+Position - the ability to locate items' positions
+Color - the ability to recognize the color of certain area, scene, or items
+Posters - the ability to recognize the posters from movie
+Celebrity - the ability to recognize the famous people
+Scene - the ability to determine what scene is it from
+Landmark - the ability to determine what Landmark is it
+Artwork - the ability to determine what Artwork is it
+OCR - the ability to perform Optical Character Recognition, a technology used to identify and extract text from images
+
+The program is located at [eval/eval.ipynb](https://github.com/anananan116/TinyVLM/blob/main/eval/eval.ipynb)
+
+For more details of this benchmark please refer to https://arxiv.org/abs/2311.13165
+
+#### How we did it:
+
+1. We loaded our model and tokenizer
+2. We loaded our dataset MME that contains image and question pairs
+3. Create our Collator class to process batches from the dataset and output it as dictionary in desired structure
+4. Create a dataloader to prepare test sets(batches) for evaluation with a batch size of 16
+5. For each batch, combine image and question and let our model to generate predictions
+6. Compare the predictions with the dataset answer while in the inference loop
+7. Save the result into a json file
+8. The rest of the code, starting from the QA sample, are our demo input question and answers from the model.
+
+### Result calculation and Confusion Matrix:
+We use an evaluation calculation program from [here](https://github.com/BradyFU/Awesome-Multimodal-Large-Language-Models/tree/Evaluation) to calculate our saved result from our previous calculation
+
+#### How we did it:
+
+1. we load the result json file and format our result
+2. Use the provided setting from the original code and run process_result
+3. We got our Confusion Matrix and tables
+
+
 ## Results
 
 ### Pretraining Stage (Model 1)
