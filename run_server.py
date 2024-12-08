@@ -23,7 +23,7 @@ model.to(device)
 tokenizer = AutoTokenizer.from_pretrained("anananan116/TinyVLM")
 tokenizer.pad_token = tokenizer.eos_token
 tokenizer.pad_token_id = tokenizer.eos_token_id
-DEFAULT_PROMPT = "Here's an image:<IMGPLH>Describe this image."
+DEFAULT_PROMPT = "<IMGPLH>Describe this image."
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -429,7 +429,7 @@ def home():
 @app.route('/process', methods=['POST'])
 def process():
     data = request.json
-    message = data.get('message', '').strip()
+    message = data.get('message', '').strip() + "Carefully explain your reasoning before answering the question."
     image_data = data.get('image')
     
     try:
@@ -467,4 +467,4 @@ def process():
         return jsonify({'response': f'Error: {str(e)}'})
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", debug=True, port=5000)
