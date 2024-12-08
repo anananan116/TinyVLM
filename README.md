@@ -324,6 +324,20 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 
 ### Multi-Task SFT Stage (Model 2)
 
+Since it will be difficult and time-consuming to run our fine tuning on a single notebook, we choose to break them down into different python files instead.  
+
+First, we prepare our data for instruction tuning by using:  
+
+[adapt_it_data.py](https://github.com/anananan116/TinyVLM/blob/main/data/adapt_it_data.py)
+
+[prepare_instruction_tunning.py](https://github.com/anananan116/TinyVLM/blob/main/data/prepare_instruction_tunning.py)
+
+We perform our instruction tuning our by running:  
+
+[instruction_tunning.py](https://github.com/anananan116/TinyVLM/blob/main/main/instruction_tunning.py)
+
+The result of that will be presented in our Evaluations.
+
 #### Evaluations
 
 | Model_name | Num_parameters | MME |
@@ -334,9 +348,21 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 | [LLaVA-1.5-7B](https://huggingface.co/llava-hf/llava-1.5-7b-hf) | 7B| 1510.7 |
 | TinyVLM(Ours) | 1.5B | 1370.02 |
 
+We observe that our model with 1.5B parameters have comparable performance when compared against some 3B models on the MME benchmark. More evaluation benchmarks are on the way.
+
 ##### MME Benchmark Results
 
+Here we show some detailed results from the MME benchmark.
+
+### loss plot 
+
+![image](assets/eval_loss.png)
+
+Since our model is huge and took an average of 80 hrs to train, it will be difficult for us to compute an official fitting graph. Though the concept of overfitting is far far more complex than the graph shows when we are training models this size... We do have overfit because of the inherent bias of the datasets, but that's much more subtle stuff. \I think our next model will be doing more fine tuning to the current ones. We can continue to collect more data and do more instruction tuning in order to add more features to our model and provide a better accuracy on handling more complex images and scenes.
+
 ###### Perception Metrics
+
+By running [calculation.py](https://github.com/anananan116/TinyVLM/blob/Milestone-4/calculation.py), we got the following result:
 
 | Category | Score | Accuracy |
 |----------|--------|-----------|
@@ -377,6 +403,13 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 | Actual Positive | 828 (TP) | 322 (FN) |
 | Actual Negative | 446 (FP) | 720 (TN) |
 
+### Conclusion to the second model
+
+In Perception, we observe that our model achieves good performance on several tasks like Existence, Color, and Scene, but falls short on some tasks like OCR, Count, and position. This could be caused by the lack of certain training data targeted at those tasks and the inherent small size of the model. Due to similar reasons, we also observe a weaker performance on condition metrics. So far, we followed the blueprint of our project as planned in the early phase. By doing instruction tuning, we were able to allow our model to have chatgpt-like conservation other than simply through cold descriptions on images. Our model now is able to interpret what we want from our question and be able to answer as a personal assistance. We will continue to work on the model by doing more kinds of fine-turning to make it even more powerful to handle confused, unseen, and more complex scenes or images.
+
+#### QA Samples
+
+![image](assets/output_it.png)
 
 ## Acknowledgement
 
