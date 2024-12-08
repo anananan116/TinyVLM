@@ -1,6 +1,8 @@
 # TinyVLM
 
-## Get Started
+Visit our demo website: [http://anananan116.com:5000/](http://anananan116.com:5000/)
+
+## Get Started Locally
 
 Follow Pytorch's [official guide](https://pytorch.org/get-started/locally/) to install pytorch. Installation with CUDA is recommended if you are using Windows/Linux.
 
