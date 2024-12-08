@@ -257,22 +257,51 @@ src
 │   │   ├── modeling_llama.py
 ```
 
+## Instruction Tuning
+
+Instruction tuning is an important part of the learning process for a pretrained model, and especially for our case with our VLM. In this step, we are giving instructions and step by steps to specified problems and giving a solution to it. In doing do we are able to improve metrics on our model and help guide the model to learn better and provide more meaningful responses than without this step.
+
+### How we did it
+
+First we made the individual datasets from some of the questions and answers we got from 
+
+* [LLaVa](https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K)
+* [LLaMa](https://github.com/tatsu-lab/stanford_alpaca?tab=readme-ov-file#data-release)
+* [VQA](https://visualqa.org/download.html)
+
+In which we did the what has been laid out [here](https://github.com/anananan116/TinyVLM?tab=readme-ov-file#data-preparing-for-instruction-tuning)
+
+The files in which contain these are at [exploration/170ktokenize.ipynb](https://github.com/anananan116/TinyVLM/blob/main/exploration/170ktokenize.ipynb), [exploration/alpaca.ipynb](https://github.com/anananan116/TinyVLM/blob/main/exploration/alpaca.ipynb), and [exploration/q_and_a.ipynb](https://github.com/anananan116/TinyVLM/blob/main/exploration/q_and_a.ipynb)
+
+
+At the end of processing the questions and answers, we output each of them to CSV files so that it can be used in our model.
+
+
 ## Evaluation on MME
 
 MME is a benchmark for evaluating Multimodal Large Language Model(MLLM), which is a more advanced version of LLM that can accept input more than just text data. MME benchmark has 14 subtasks in total to fully explore, test, and evolution the full potential of a MLLM, and each subtask can be scored up to 200 points. MME is trustworthy to test our model since it successfully and comprehensively evaluates a total of 30 advanced MLLMs including BLIP-2, LLaVa, MiniGPT-4, ect...
 
 ### Perception Metrics:
 
-Existence - the ability to recognize something exist
-Count - the ability to have the correct count of certain item
-Position - the ability to locate items' positions
-Color - the ability to recognize the color of certain area, scene, or items
-Posters - the ability to recognize the posters from movie
-Celebrity - the ability to recognize the famous people
-Scene - the ability to determine what scene is it from
-Landmark - the ability to determine what Landmark is it
-Artwork - the ability to determine what Artwork is it
-OCR - the ability to perform Optical Character Recognition, a technology used to identify and extract text from images
+Existence - The ability to recognize something exist
+
+Count - The ability to have the correct count of certain item
+
+Position - The ability to locate items' positions
+
+Color - The ability to recognize the color of certain area, scene, or items
+
+Posters - The ability to recognize the posters from movie
+
+Celebrity - The ability to recognize the famous people
+
+Scene - The ability to determine what scene is it from
+
+Landmark - The ability to determine what Landmark is it
+
+Artwork - The ability to determine what Artwork is it
+
+OCR - The ability to perform Optical Character Recognition, a technology used to identify and extract text from images
 
 The program is located at [eval/eval.ipynb](https://github.com/anananan116/TinyVLM/blob/main/eval/eval.ipynb)
 
@@ -294,7 +323,7 @@ We use an evaluation calculation program from [here](https://github.com/BradyFU/
 
 #### How we did it:
 
-1. we load the result json file and format our result
+1. We load the result json file and format our result
 2. Use the provided setting from the original code and run process_result
 3. We got our Confusion Matrix and tables
 
@@ -402,7 +431,21 @@ Here we show some detailed results from the MME benchmark.
 
 In Perception, we observe that our model achieves good performance on several tasks like Existence, Color, and Scene, but falls short on some tasks like OCR, Count, and position. This could be caused by the lack of certain training data targeted at those tasks and the inherent small size of the model. Due to similar reasons, we also observe a weaker performance on condition metrics. So far, we followed the blueprint of our project as planned in the early phase. By doing instruction tuning, we were able to allow our model to have chatgpt-like conservation other than simply through cold descriptions on images. Our model now is able to interpret what we want from our question and be able to answer as a personal assistance. We will continue to work on the model by doing more kinds of fine-turning to make it even more powerful to handle confused, unseen, and more complex scenes or images.
 
+## Statement of Collaboration
+ 
+Zihan Liu - zil065@ucsd.edu
+* Worked on README
 
+Zhenyu Jiang - zhj014@ucsd.edu
+* Worked on README
+
+Henry Tran - het002@ucsd.edu
+* Worked on README
+* Assissted in the Instruction Tuning
+* Worked on the Data Exploration
+
+Charlie Gillet - cgillet@ucsd.edu
+* Worked on README
 
 ## Acknowledgement
 
