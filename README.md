@@ -276,6 +276,13 @@ The files in which contain these are at [exploration/170ktokenize.ipynb](https:/
 
 At the end of processing the questions and answers, we output each of them to CSV files so that it can be used in our model.
 
+From here we go to process the questions and answers within the structure of [data/prepare_instruction_tuning.py](https://github.com/anananan116/TinyVLM/blob/main/data/prepare_instruction_tunning.py) and [data/adapt_it_data.py](https://github.com/anananan116/TinyVLM/blob/main/data/adapt_it_data.py).
+
+<br>
+
+Where inside of the [prepare_instruction_tuning.py](https://github.com/anananan116/TinyVLM/blob/main/data/prepare_instruction_tunning.py) file, we are downloading these said images from a passed in csv file. From there we are normalizing every image, and processing every image while retaining the information of the images for later. Essentially, this file is designed to preprocess the passed csv file, and download images associated with said photo_id. And afterwards, we are outputing the result as a csv for use by [data/adapt_it_data.py](https://github.com/anananan116/TinyVLM/blob/main/data/adapt_it_data.py).
+
+Inside of [data/adapt_it_data.py](https://github.com/anananan116/TinyVLM/blob/main/data/adapt_it_data.py), we are validating the outputted csv file. Where we are handling the missing values of important features, input and instruction, and replacing with empty strings. Also merging inputs and those features whenever desired/needed. We are also processing each of the images as well verifying if valifity of the image, where if it is valid image, we pass it into OpenAI's CLIP model again to be preprocessed. Once everything that is can be processed is, we output into a new csv file for use by [main/instruction_tuning.py](https://github.com/anananan116/TinyVLM/blob/main/main/instruction_tunning.py). Where in instruction_tuning.py, it will leverage these results to make better and more accurate outputs.
 
 ## Evaluation on MME
 
