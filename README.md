@@ -381,7 +381,7 @@ Since it will be difficult and time-consuming to run our fine tuning on a single
 
 ![image](assets/eval_loss.png)
 
-Since our model is huge and took an average of 80 hrs to train, it will be difficult for us to compute an official fitting graph. Though the concept of overfitting is far far more complex than the graph shows when we are training models this size... We do have overfit because of the inherent bias of the datasets, but that's much more subtle stuff. \I think our next model will be doing more fine tuning to the current ones. We can continue to collect more data and do more instruction tuning in order to add more features to our model and provide a better accuracy on handling more complex images and scenes.
+Since our model is huge and took an average of 80 hrs to train, it will be difficult for us to compute an official fitting graph. However, from the loss graph, we didn't see any overfitting. I think our next model will be doing more fine tuning to the current ones. We can continue to collect more data and do more instruction tuning in order to add more features to our model and provide a better accuracy on handling more complex images and scenes.
 
 #### QA Samples
 
@@ -453,28 +453,38 @@ In Perception, we observe that our model achieves good performance on several ta
 ## Dicussion 
 Since training a LLM model needs a lot of data, we explored many different sources to gather enough data. We mainly choose to use the VQA data sources, which usually come with pictures, questions, and answers. By doing so, it fits our purpose of training a Vision language model since we want our model to be able to respond to pictures and questions and give proper answers. Furthermore, we formatted the data into <token> content structure so that it will be easy for us to use them during the pretraining and the instruction tuning process. Moving on, in the pretraining stage of the model, we freeze the LLM and only train the vision encoder because the answers from our pre-training data are too simple and straightforward. This will ruin the style of output of our original LLM model, and we tried to avoid that. In the instruction tuning phase, the answers from the instruction tuning model are more human like. Therefore, we allow both vision encode and the LLM model to be trained in order to achieve better accuracy and get more functionality. However, after the instruction tuning is done, we notice that at some point the style of our LLM response is not proper. For example, even though we ask different questions like what is in the picture or what can you see from the picture, it always starts the output by “The answer is…” It is because even though we have higher quality of data in the instruction tuning, some of our data’s answers are just a single word response “yes” or “no”. This leads to the style of output not following the instruction we set. One solution we came up with is to feed those low quality questions and answers into chatgpt by using the api program we made. By doing so, the answers for those data will be more descriptive and human-like. However, we realize that would cost over 200 dollars to finish transforming our data and end up giving up on that idea. One other improvement that we can possibly do is to increase the number of patches that we tokenize. Currently, our model only uses 64 patches, but if we use double the amount or more, it will increase the accuracy for our model to analyze more complex and detailed pictures. Overall, the model we trained fulfilled our initial goal by successfully adding a picture reading functionality to the LLM model. It also fulfills the purpose of the group project by exploring and attempting the neural network and LLM models. 
 
+## Conclusion
+Overall, we believe that this has been a successful project. Being able to get to a satisfactory end point of this highly ambitious project. Apparently, our 1.5B model that we construct in weeks can outperform other 2B or even 3B models, which means we used only a portion of the resource to achieve equivalent or better performance. At the end of all of this, there are things where things could’ve been more optimal as well such as using Chatgpt4 to increase the quality of our data in the instruction tuning phase. At points in this project work division was a hard balance with the difficulty of the project and lack of experience from some of our members. We feel like there could’ve been a way where work could’ve been split in a more even fashion and get to a similar end point. There were times of struggles where communication was at points not the greatest and led to miscommunication. However throughout all the struggles and hardships, we feel we have made and done something cool, while exploring our passions in machine learning.
 
 ## Statement of Collaboration
-
+ 
 Zihan Liu - zil065@ucsd.edu
-
-- Worked on README
+* Construct model architecture
+* Worked on training code for pretraining and instruction tunning
+* Performed training for the models
+* Worked on report
 
 Zhenyu Jiang - zhj014@ucsd.edu
-
-- Worked on README
+* Worked on collecting, downloading and adpating datasets
+* Worked on data exploration
+* Facilitated on training code for pretraining and instruction tunning
+* Worked on report
+* wrote an OPENAI api tool for data processing, worked on adding tokens to data
 
 Henry Tran - het002@ucsd.edu
-
-- Worked on README
-- Assissted in the Instruction Tuning
-- Worked on the Data Exploration
+* Assissted in the Instruction Tuning
+* Worked on the Data Exploration
+* Worked on performing evaluation for both pretraining and instruction tunning part
+* Facilitated on training code for pretraining and instruction tunning
+* Worked on data exploration
+* Worked on report
 
 Charlie Gillet - cgillet@ucsd.edu
-
-- Worked on README
-- Wrote program to download all images
-- Worked on the Data Preprocessing
+* Worked on data exploration
+* Construct the demo website
+* Facilitated on visualization of our result
+* Worked on training code for pretraining and instruction tunning
+* Worked on report
 
 ## Acknowledgement
 
