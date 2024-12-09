@@ -28,7 +28,7 @@ And visit the localhost website to access the web inference interface.
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from PIL import Image
 import requests
-import torch 
+import torch
 
 model = AutoModelForCausalLM.from_pretrained(
     "anananan116/TinyVLM",
@@ -37,7 +37,7 @@ model = AutoModelForCausalLM.from_pretrained(
     ).to('cuda').eval()
 tokenizer = AutoTokenizer.from_pretrained("anananan116/TinyVLM")
 
-# `<IMGPLH>` is the image placeholder which will be replaced by image embeddings. 
+# `<IMGPLH>` is the image placeholder which will be replaced by image embeddings.
 # the number of `<IMGPLH>` should be equal to the number of input images
 
 prompt = "Here's an image:<IMGPLH>Describe this image."
@@ -46,10 +46,10 @@ inputs = model.prepare_input_ids_for_generation([prompt], [image], tokenizer)
 
 with torch.no_grad():
     outputs = model.generate(
-        input_ids=inputs['input_ids'].to("cuda"), 
-        attention_mask=inputs['attention_mask'].to("cuda"), 
-        encoded_image = inputs["encoded_image"], 
-        max_new_tokens=128, 
+        input_ids=inputs['input_ids'].to("cuda"),
+        attention_mask=inputs['attention_mask'].to("cuda"),
+        encoded_image = inputs["encoded_image"],
+        max_new_tokens=128,
         do_sample=True
     )
 
@@ -72,6 +72,7 @@ Our model combines a Llama 3.2 1B language model with a CLIP ViT-L (~400M parame
 Our training approach follows a carefully designed two-stage process:
 
 1. **Initial Image Captioning Phase**
+
    - Train on a large-scale caption dataset, prioritizing breadth over precision
    - This foundational stage allows the model to:
      - Develop basic visual recognition capabilities
@@ -218,30 +219,30 @@ In our training, we freeze the vision encoder and only train the adapter and the
 
 #### Hyperparameters
 
-| Hyperparameters | Pretraining | Multi-Task SFT |
-|-----------|--------|-------------|
-| Learning rate | 2e-5 | 1e-5|
-| LR decay | Cosine | Cosine |
-| Weight decay | 0 | 0 |
-| Per device batch size | 8 | 4 |
-| Gradient accumulation steps | 8 | 8 |
-| Precision | BF16 | BF16 |
-| Total samples | 3.75M | 1.02M |
-| Optimizer | AdamW | AdamW_bnb_8bit|
-| Number of GPUs | 2 | 2 |
-| Global batch size | 128 | 64 |
-| Visual Encoder | Hot | Hot |
-| Connector | Hot | Hot |
-| LLM | Frozen | Hot |
+| Hyperparameters             | Pretraining | Multi-Task SFT |
+| --------------------------- | ----------- | -------------- |
+| Learning rate               | 2e-5        | 1e-5           |
+| LR decay                    | Cosine      | Cosine         |
+| Weight decay                | 0           | 0              |
+| Per device batch size       | 8           | 4              |
+| Gradient accumulation steps | 8           | 8              |
+| Precision                   | BF16        | BF16           |
+| Total samples               | 3.75M       | 1.02M          |
+| Optimizer                   | AdamW       | AdamW_bnb_8bit |
+| Number of GPUs              | 2           | 2              |
+| Global batch size           | 128         | 64             |
+| Visual Encoder              | Hot         | Hot            |
+| Connector                   | Hot         | Hot            |
+| LLM                         | Frozen      | Hot            |
 
 #### Training Stats
 
-| Stats | Pretraining | Multi-Task SFT |
-|-----------|--------|---------|
-| GPU | 2xNvidia RTX 3090 | 2xNvidia RTX 3090 |
-| Training Time | 40 Hours | 25 Hours |
-| Visual Encoder Init. | openai/clip-vit-large-patch14-336 | Pretrain |
-| Multi-Modal Modeling Init. | meta-llama/Llama-3.2-1B-Instruct | Pretrain |
+| Stats                      | Pretraining                       | Multi-Task SFT    |
+| -------------------------- | --------------------------------- | ----------------- |
+| GPU                        | 2xNvidia RTX 3090                 | 2xNvidia RTX 3090 |
+| Training Time              | 40 Hours                          | 25 Hours          |
+| Visual Encoder Init.       | openai/clip-vit-large-patch14-336 | Pretrain          |
+| Multi-Modal Modeling Init. | meta-llama/Llama-3.2-1B-Instruct  | Pretrain          |
 
 ### File Structure
 
@@ -257,22 +258,35 @@ src
 │   │   ├── modeling_llama.py
 ```
 
+## Pretraining
+
+To create any vision-language model, we need to pretrain in order to prepare the model for tasks like image captioning or text-image retrieval. For our case, this allows our model to use joint representations of visual and textual data from our dataset, and it accounts for our limited computational resources while still achieving strong performance.
+
+### How we did it
+
+The program we made for pretraining is located at [main/pretrain.py](https://github.com/anananan116/TinyVLM/blob/main/main/pretrain.py).
+
+This program makes use primarily of the PyTorch and Transformers libraries, and the main() function serves to conduct the whole pretraining pipeline, including argument parsing, model training and evaluation. The HfArgumentParser is used to parse the command-line arguments that were preprocessed from our data into interpretable objects. We then load our model configurations as model_args, along with additional tokens. The get_model_and_tokenizer() is used to initialize the VLM model, tokenizer, special token mapping, and processor.
+
+To prepare our data, the program uses the VLMData class in order to prepare the training and evaluation datasets, and a collator function is made to handle batching and preprocessing. We chose to freeze the model parameters, which limits the model training to specific parts, and keeps vision-related parameters trainable. At this point, the VLMTrainer is initialized, and we then use its train() method to train the model, and lastly we evaluate this model using its evaluate() method.
+
+After running this program, our model is pretrained, which allows us to move forward on the instruction tuning.
+
 ## Instruction Tuning
 
 Instruction tuning is an important part of the learning process for a pretrained model, and especially for our case with our VLM. In this step, we are giving instructions and step by steps to specified problems and giving a solution to it. In doing do we are able to improve metrics on our model and help guide the model to learn better and provide more meaningful responses than without this step.
 
 ### How we did it
 
-First we made the individual datasets from some of the questions and answers we got from 
+First we made the individual datasets from some of the questions and answers we got from
 
-* [LLaVa](https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K)
-* [LLaMa](https://github.com/tatsu-lab/stanford_alpaca?tab=readme-ov-file#data-release)
-* [VQA](https://visualqa.org/download.html)
+- [LLaVa](https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K)
+- [LLaMa](https://github.com/tatsu-lab/stanford_alpaca?tab=readme-ov-file#data-release)
+- [VQA](https://visualqa.org/download.html)
 
 In which we did the what has been laid out [here](https://github.com/anananan116/TinyVLM?tab=readme-ov-file#data-preparing-for-instruction-tuning)
 
 The files in which contain these are at [exploration/170ktokenize.ipynb](https://github.com/anananan116/TinyVLM/blob/main/exploration/170ktokenize.ipynb), [exploration/alpaca.ipynb](https://github.com/anananan116/TinyVLM/blob/main/exploration/alpaca.ipynb), and [exploration/q_and_a.ipynb](https://github.com/anananan116/TinyVLM/blob/main/exploration/q_and_a.ipynb)
-
 
 At the end of processing the questions and answers, we output each of them to CSV files so that it can be used in our model.
 
@@ -326,6 +340,7 @@ For more details of this benchmark please refer to https://arxiv.org/abs/2311.13
 8. The rest of the code, starting from the QA sample, are our demo input question and answers from the model.
 
 ### Result calculation and Confusion Matrix:
+
 We use an evaluation calculation program from [here](https://github.com/BradyFU/Awesome-Multimodal-Large-Language-Models/tree/Evaluation) to calculate our saved result from our previous calculation
 
 #### How we did it:
@@ -333,7 +348,6 @@ We use an evaluation calculation program from [here](https://github.com/BradyFU/
 1. We load the result json file and format our result
 2. Use the provided setting from the original code and run process_result
 3. We got our Confusion Matrix and tables
-
 
 ## Results
 
@@ -351,11 +365,9 @@ We notice a smooth training curve, which indicates a stable training. We also no
 
 As our evaluation, we mainly assess our model on the BLEU score. BLEU score measures how good the model's output caption matches the ground truth caption. BLEU-n means BLEU score with n-gram. Note that though the BLEU score seems to be low in our setup, this could be caused by the extreme diveristy of the pre-training stage training captions rather than underfit of the model.
 
-
-#### Conclusion for the pre-training process  
+#### Conclusion for the pre-training process
 
 By utilizing CLIP's vision transformer and Llama architecture, we were able to get a pretty decent pre-trained model that can have high accuracy on recognizing common objects and actions. We were able to decrease the loss as the model trained, and BLEU Scores steadily increased as trained steps increased. Overall, the BLEU score and the model performance meet our initial expectation. In order to allow our model to recognize more complex and unusual objects or patterns, we will collect more VQA data from more ML resources, pre-process them, and then use them for the instruction tuning. By feeding more random and variety of images, we expect the model will have higher accuracy in general, be able to answer specific user's questions, and be better at predicting user's intent and expectations.
-
 
 #### Image Caption Samples
 
@@ -363,7 +375,7 @@ By utilizing CLIP's vision transformer and Llama architecture, we were able to g
 
 ### Multi-Task SFT Stage (Model 2)
 
-Since it will be difficult and time-consuming to run our fine tuning on a single notebook, we choose to break them down into different python files instead.  
+Since it will be difficult and time-consuming to run our fine tuning on a single notebook, we choose to break them down into different python files instead.
 
 #### loss plot
 
@@ -377,13 +389,13 @@ Since our model is huge and took an average of 80 hrs to train, it will be diffi
 
 #### Evaluations
 
-| Model_name | Num_parameters | MME |
-|----------|--------|--------|
-| [Zhang199/TinyLLaVA-Qwen2-0.5B-SigLIP](https://huggingface.co/Zhang199/TinyLLaVA-Qwen2-0.5B-SigLIP)| 1B | 1153 |
-| [tinyllava/TinyLLaVA-Gemma-SigLIP-2.4B](https://huggingface.co/tinyllava/TinyLLaVA-Gemma-SigLIP-2.4B) | 3B | 1339.0 |
-| [Zhang199/TinyLLaVA-Qwen2.5-3B-SigLIP](https://huggingface.co/Zhang199/TinyLLaVA-Qwen2.5-3B-SigLIP)| 3.8B | 1438.7 |
-| [LLaVA-1.5-7B](https://huggingface.co/llava-hf/llava-1.5-7b-hf) | 7B| 1510.7 |
-| TinyVLM(Ours) | 1.5B | 1370.02 |
+| Model_name                                                                                            | Num_parameters | MME     |
+| ----------------------------------------------------------------------------------------------------- | -------------- | ------- |
+| [Zhang199/TinyLLaVA-Qwen2-0.5B-SigLIP](https://huggingface.co/Zhang199/TinyLLaVA-Qwen2-0.5B-SigLIP)   | 1B             | 1153    |
+| [tinyllava/TinyLLaVA-Gemma-SigLIP-2.4B](https://huggingface.co/tinyllava/TinyLLaVA-Gemma-SigLIP-2.4B) | 3B             | 1339.0  |
+| [Zhang199/TinyLLaVA-Qwen2.5-3B-SigLIP](https://huggingface.co/Zhang199/TinyLLaVA-Qwen2.5-3B-SigLIP)   | 3.8B           | 1438.7  |
+| [LLaVA-1.5-7B](https://huggingface.co/llava-hf/llava-1.5-7b-hf)                                       | 7B             | 1510.7  |
+| TinyVLM(Ours)                                                                                         | 1.5B           | 1370.02 |
 
 We observe that our model with 1.5B parameters have comparable performance when compared against some 3B models on the MME benchmark. More evaluation benchmarks are on the way.
 
@@ -393,29 +405,29 @@ Here we show some detailed results from the MME benchmark.
 
 ###### Perception Metrics
 
-| Category | Score | Accuracy |
-|----------|--------|-----------|
-| Existence | 175.00 | 91.67% |
-| Count | 75.00 | 55.00% |
-| Position | 85.00 | 55.00% |
-| Color | 126.67 | 73.33% |
-| Posters | 79.25 | 50.68% |
-| Celebrity | 86.18 | 57.35% |
-| Scene | 150.25 | 83.25% |
-| Landmark | 124.50 | 72.50% |
-| Artwork | 99.25 | 62.75% |
-| OCR | 65.00 | 55.00% |
+| Category  | Score  | Accuracy |
+| --------- | ------ | -------- |
+| Existence | 175.00 | 91.67%   |
+| Count     | 75.00  | 55.00%   |
+| Position  | 85.00  | 55.00%   |
+| Color     | 126.67 | 73.33%   |
+| Posters   | 79.25  | 50.68%   |
+| Celebrity | 86.18  | 57.35%   |
+| Scene     | 150.25 | 83.25%   |
+| Landmark  | 124.50 | 72.50%   |
+| Artwork   | 99.25  | 62.75%   |
+| OCR       | 65.00  | 55.00%   |
 
 **Total Perception Score:** 1066.09
 
 ###### Cognition Metrics
 
-| Category | Score | Accuracy |
-|----------|--------|-----------|
-| Commonsense Reasoning | 91.43 | 60.00% |
-| Numerical Calculation | 80.00 | 55.00% |
-| Text Translation | 80.00 | 50.00% |
-| Code Reasoning | 52.50 | 42.50% |
+| Category              | Score | Accuracy |
+| --------------------- | ----- | -------- |
+| Commonsense Reasoning | 91.43 | 60.00%   |
+| Numerical Calculation | 80.00 | 55.00%   |
+| Text Translation      | 80.00 | 50.00%   |
+| Code Reasoning        | 52.50 | 42.50%   |
 
 **Total Cognition Score:** 303.93
 
@@ -429,30 +441,36 @@ Here we show some detailed results from the MME benchmark.
 
 ###### Confusion Matrix
 
-|          | Predicted Positive | Predicted Negative |
-|----------|-------------------|-------------------|
-| Actual Positive | 828 (TP) | 322 (FN) |
-| Actual Negative | 446 (FP) | 720 (TN) |
+|                 | Predicted Positive | Predicted Negative |
+| --------------- | ------------------ | ------------------ |
+| Actual Positive | 828 (TP)           | 322 (FN)           |
+| Actual Negative | 446 (FP)           | 720 (TN)           |
 
 #### Conclusion to the second model
 
 In Perception, we observe that our model achieves good performance on several tasks like Existence, Color, and Scene, but falls short on some tasks like OCR, Count, and position. This could be caused by the lack of certain training data targeted at those tasks and the inherent small size of the model. Due to similar reasons, we also observe a weaker performance on condition metrics. So far, we followed the blueprint of our project as planned in the early phase. By doing instruction tuning, we were able to allow our model to have chatgpt-like conservation other than simply through cold descriptions on images. Our model now is able to interpret what we want from our question and be able to answer as a personal assistance. We will continue to work on the model by doing more kinds of fine-turning to make it even more powerful to handle confused, unseen, and more complex scenes or images.
 
 ## Statement of Collaboration
- 
+
 Zihan Liu - zil065@ucsd.edu
-* Worked on README
+
+- Worked on README
 
 Zhenyu Jiang - zhj014@ucsd.edu
-* Worked on README
+
+- Worked on README
 
 Henry Tran - het002@ucsd.edu
-* Worked on README
-* Assissted in the Instruction Tuning
-* Worked on the Data Exploration
+
+- Worked on README
+- Assissted in the Instruction Tuning
+- Worked on the Data Exploration
 
 Charlie Gillet - cgillet@ucsd.edu
-* Worked on README
+
+- Worked on README
+- Wrote program to download all images
+- Worked on the Data Preprocessing
 
 ## Acknowledgement
 
